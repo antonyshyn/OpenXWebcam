@@ -1,0 +1,17 @@
+# Build products
+build/
+DerivedData/
+*.app/
+*.o
+*.swiftmodule
+
+# Spike capture output
+spike/frames/
+spike/*.log
+
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
