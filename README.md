@@ -1,56 +1,46 @@
 # OpenXWebcam
 
-Open-source macOS app that turns a **Fujifilm camera into a webcam over USB** — no
-capture card, no disabling SIP. A modern, MIT-licensed successor to Fujifilm's
-abandoned "FUJIFILM X Webcam" app (a legacy CoreMediaIO **DAL** plugin that macOS 26
-no longer loads).
+Open-source macOS app that turns a Fujifilm camera into a system webcam over USB.
+No capture card, no disabling SIP. A replacement for Fujifilm's discontinued
+"FUJIFILM X Webcam" app, which no longer works on current macOS.
 
-Target hardware: **Fujifilm X-T30** (original, 2019). Target OS: **macOS 26** (Tahoe),
-Apple Silicon.
+**Status: early development.** Live view over raw USB is proven on an X-T30:
+~26 fps live-view JPEG stream, pulled with our own PTP transport (see
+[`spike-rawusb/`](spike-rawusb/)). The next step is the CoreMediaIO camera
+extension so the camera shows up in Zoom, Meet, FaceTime and OBS.
 
 ## How it works
 
-The original X-T30 has no native UVC webcam mode, so video is tunneled out over USB
-using **PTP**. Instead of fighting macOS's `ptpcamerad` for the raw USB interface
-(blocked by SIP), we relay PTP commands **through** Apple's sanctioned camera stack:
+Fujifilm X cameras have no UVC webcam mode, so the video has to be pulled over
+USB PTP. macOS's `ptpcamerad` normally holds the camera's USB interface; we take
+it over and run the Fuji live-view sequence ourselves:
 
 ```
-X-T30 --USB PTP-->  [Agent app]  ImageCaptureCore + requestSendPTPCommand -> decode JPEG
-                          |  (IOSurface / XPC)
-                          v
-                  [CoreMediaIO Camera Extension]  -->  "OpenXWebcam" in Zoom/Meet/etc.
+camera ──USB/PTP──> menu bar app ──> CMIO camera extension ──> Zoom / Meet / OBS
+                    (claims the interface, starts live view,
+                     decodes the JPEG stream)
 ```
 
-`ICCameraDevice.requestSendPTPCommand` relays arbitrary PTP opcodes with SIP enabled.
-ImageCaptureCore is **not** available inside a CoreMediaIO extension, so the camera
-work runs in a normal user-space agent that ships decoded frames to the extension.
+The PTP opcode sequence is a protocol fact documented by the
+[libgphoto2](https://github.com/gphoto/libgphoto2) project. No third-party
+source code is reused; everything here is MIT.
 
-The Fuji live-view PTP opcode sequence is a protocol fact documented in the
-open-source [libgphoto2](https://github.com/gphoto/libgphoto2) ptp2 driver. No
-third-party source code is reused.
+## Spikes
 
-## Status
+Research code that got the protocol working, kept for reference:
 
-Early development. **Phase 0** is a feasibility spike proving we can pull usable
-live-view frames over ImageCaptureCore PTP — see [`spike/`](spike/).
+- [`spike-rawusb/`](spike-rawusb/) — the working proof. Claims the interface via
+  IOUSBLib, opens a PTP session, sets the camera's priority mode to USB control,
+  starts live view and saves frames. Camera setup: USB MODE = `X WEBCAM`,
+  Auto Power Off = OFF, data cable. Run with `./build.sh && ./run.sh`.
+- [`spike/`](spike/) — earlier ImageCaptureCore attempt. Dead end: capture never
+  starts while Apple's daemon co-owns the session.
 
-## Phase 0 spike — how to run
+## Camera support
 
-1. Set the camera: **MENU -> Connection Setting -> PC CONNECTION MODE -> USB TETHER
-   SHOOTING FIXED**, and **Auto Power Off -> OFF**. Connect it by USB and make sure
-   it's awake.
-2. Build and run:
-   ```sh
-   cd spike
-   ./run.sh
-   ```
-3. If macOS prompts for camera access, click **Allow**. The spike enumerates the
-   camera, starts Fuji live view, saves ~30 JPEG frames to `spike/frames/`, and
-   prints the achievable frame rate and a VERDICT.
-
-Success criterion: usable fps (target >=15) and clean frames. If ImageCaptureCore
-refuses the Fuji opcodes, the fallback is raw IOUSBHost (still SIP-safe); if USB is
-entirely unworkable, the hardware fallback is an HDMI capture card.
+Developed and tested with an X-T30. Other X and GFX bodies speak the same
+protocol and are expected to work; a support table will be published once the
+app is usable.
 
 ## License
 
