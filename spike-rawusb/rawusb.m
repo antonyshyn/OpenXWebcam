@@ -44,10 +44,20 @@ enum {
     OP_GetObjectInfo        = 0x1008,
     OP_GetObject            = 0x1009,
     OP_DeleteObject         = 0x100B,
+    OP_GetDevicePropValue   = 0x1015,
+    OP_SetDevicePropValue   = 0x1016,
     OP_TerminateOpenCapture = 0x1018,
     OP_InitiateOpenCapture  = 0x101C,
 };
 static const uint32_t LV_HANDLE = 0x80000001;   // Fuji synthetic live-view object
+
+// Fuji vendor device-property codes (libgphoto2 camlibs/ptp2/ptp.h)
+enum {
+    DPC_FUJI_PriorityMode = 0xD207,   // 1=camera priority, 2=USB control (gphoto sets 2)
+    DPC_FUJI_CurrentState = 0xD212,   // opaque state blob (5 bytes on this cam)
+    DPC_FUJI_ForceMode    = 0xD230,   // "set by webcam app" = 1 (only legal value)
+    DPC_FUJI_PCMode       = 0xD38C,   // timelapse traffic sets 1 ("PC Mode"); unadvertised here
+};
 
 // ─── PTP response codes ───────────────────────────────────────────────────────
 enum {
@@ -299,15 +309,72 @@ static void closeCamera(void) {
     if (gDevice) { (*gDevice)->USBDeviceClose(gDevice);  (*gDevice)->Release(gDevice); gDevice = NULL; }
 }
 
-// ─── DeviceInfo: report VendorExtensionID + #operations (does raw USB differ from ICC's 0x0006?) ───
+// ─── PTP dataset cursor (bounds-checked little-endian reader) ─────────────────
+typedef struct { const uint8_t *p; uint32_t len, off; } Cursor;
+static BOOL curHas(Cursor *c, uint32_t n) { return c->off <= c->len && n <= c->len - c->off; }
+static uint8_t  curU8 (Cursor *c) { uint8_t  v = curHas(c,1) ? c->p[c->off]        : 0; c->off += 1; return v; }
+static uint16_t curU16(Cursor *c) { uint16_t v = curHas(c,2) ? get16(c->p+c->off)  : 0; c->off += 2; return v; }
+static uint32_t curU32(Cursor *c) { uint32_t v = curHas(c,4) ? get32(c->p+c->off)  : 0; c->off += 4; return v; }
+static NSString *curString(Cursor *c) {           // PTP string: u8 charCount (incl. NUL), UTF-16LE
+    uint8_t n = curU8(c);
+    NSString *s = @"";
+    if (n && curHas(c, (uint32_t)n * 2))
+        s = [[NSString alloc] initWithBytes:c->p + c->off length:(NSUInteger)n * 2
+                                   encoding:NSUTF16LittleEndianStringEncoding] ?: @"";
+    c->off += (uint32_t)n * 2;
+    return [s stringByTrimmingCharactersInSet:NSCharacterSet.controlCharacterSet];
+}
+static NSString *curU16Array(Cursor *c) {         // AUINT16: u32 count then u16[count], as hex
+    uint32_t n = curU32(c);
+    NSMutableString *s = [NSMutableString string];
+    for (uint32_t i = 0; i < n && curHas(c, 2); i++) [s appendFormat:@"%s0x%04X", i ? " " : "", curU16(c)];
+    return s;
+}
+
+// ─── DeviceInfo: full dump — VendorExtensionDesc is what flips libgphoto2 into Fuji mode ───
 static void reportDeviceInfo(void) {
     NSData *di = nil; uint16_t rc = ptp(OP_GetDeviceInfo, NULL, 0, NULL, 0, &di, NULL, NULL);
     logln(@"GetDeviceInfo(0x1001): rc=0x%04X dataBytes=%lu", rc, (unsigned long)di.length);
-    if (di.length >= 8) {
-        const uint8_t *p = di.bytes;
-        uint32_t vendorExt = get32(p + 2);           // after StandardVersion(u16)
-        logln(@"  VendorExtensionID = 0x%04X  (Fuji=0x000E, MTP/PTP=0x0006)", vendorExt);
-    }
+    if (di.length < 12) return;
+    Cursor c = { di.bytes, (uint32_t)di.length, 0 };
+    uint16_t std   = curU16(&c);
+    uint32_t vext  = curU32(&c);
+    uint16_t vver  = curU16(&c);
+    NSString *vdesc = curString(&c);
+    uint16_t fmode = curU16(&c);
+    logln(@"  StandardVersion=%u VendorExtensionID=0x%04X (Fuji=0x000E, MTP/PTP=0x0006) v%u", std, vext, vver);
+    logln(@"  VendorExtensionDesc=\"%@\"%@", vdesc,
+          [vdesc containsString:@"fujifilm.co.jp"] ? @"  ← triggers libgphoto2's MTP→Fuji override" : @"");
+    logln(@"  FunctionalMode=0x%04X", fmode);
+    logln(@"  Operations : %@", curU16Array(&c));
+    logln(@"  Events     : %@", curU16Array(&c));
+    logln(@"  DeviceProps: %@", curU16Array(&c));
+    logln(@"  CaptureFmts: %@", curU16Array(&c));
+    logln(@"  ImageFmts  : %@", curU16Array(&c));
+    NSString *manu = curString(&c), *model = curString(&c), *ver = curString(&c);
+    logln(@"  Manufacturer=\"%@\" Model=\"%@\" Version=\"%@\"", manu, model, ver);
+}
+
+// ─── Device-property get/set (UINT16) ────────────────────────────────────────
+static uint16_t getPropU16(uint16_t code, uint16_t *value) {
+    uint32_t p = code; NSData *d = nil;
+    uint16_t rc = ptp(OP_GetDevicePropValue, &p, 1, NULL, 0, &d, NULL, NULL);
+    if (rc == RC_OK && d.length >= 2 && value) *value = get16(d.bytes);
+    return rc;
+}
+static uint16_t setPropU16(uint16_t code, uint16_t value) {
+    uint32_t p = code; uint8_t v[2]; put16(v, value);
+    return ptp(OP_SetDevicePropValue, &p, 1, v, 2, NULL, NULL, NULL);
+}
+
+// ─── FUJI_CurrentState (0xD212): opaque blob — dump hex so we can diff states ──
+static void dumpCurrentState(NSString *when) {
+    uint32_t p = DPC_FUJI_CurrentState; NSData *d = nil;
+    uint16_t rc = ptp(OP_GetDevicePropValue, &p, 1, NULL, 0, &d, NULL, NULL);
+    NSMutableString *hex = [NSMutableString string];
+    const uint8_t *b = d.bytes;
+    for (NSUInteger i = 0; i < MIN(d.length, (NSUInteger)64); i++) [hex appendFormat:@"%02X ", b[i]];
+    logln(@"  CurrentState(0xD212) %@: rc=0x%04X len=%lu [%@]", when, rc, (unsigned long)d.length, hex);
 }
 
 // ─── main ─────────────────────────────────────────────────────────────────────
@@ -336,7 +403,24 @@ int main(int argc, char **argv) {
 
         reportDeviceInfo();
 
-        // START live view. Over raw USB (no ICC co-owner) this should finally leave DeviceBusy.
+        // ── Fuji capture prep — exact replica of libgphoto2 camera_prepare_capture
+        // (config.c:495), which Fuji cameras get at camera_init, BEFORE any capture:
+        //   d38c -> 1 ("PC Mode"; unadvertised on this cam, gphoto tolerates the error)
+        //   d207 -> 2 ("USB control"; we previously only ever set 1 — the descriptor
+        //              default is 2, and this is the prime DeviceBusy suspect)
+        logln(@"— Fuji prep (libgphoto2 camera_prepare_capture replica) —");
+        uint16_t pv = 0xFFFF, prc;
+        prc = getPropU16(DPC_FUJI_PriorityMode, &pv);
+        logln(@"  PriorityMode(0xD207) before: rc=0x%04X val=%u", prc, pv);
+        prc = setPropU16(DPC_FUJI_PCMode, 1);
+        logln(@"  Set PCMode(0xD38C)=1: rc=0x%04X%@", prc, prc == RC_OK ? @" ✓" : @" (unadvertised prop — error tolerated, gphoto does the same)");
+        prc = setPropU16(DPC_FUJI_PriorityMode, 2);
+        logln(@"  Set PriorityMode(0xD207)=2: rc=0x%04X%@", prc, prc == RC_OK ? @" ✓" : @"");
+        pv = 0xFFFF; prc = getPropU16(DPC_FUJI_PriorityMode, &pv);
+        logln(@"  PriorityMode(0xD207) after : rc=0x%04X val=%u", prc, pv);
+        dumpCurrentState(@"pre-capture");
+
+        // START live view. With the Fuji prep done this should finally leave DeviceBusy.
         logln(@"— InitiateOpenCapture(0x101C, 0, 0) —");
         uint32_t p0[2] = {0, 0};
         uint16_t rc = 0; BOOL started = NO;
@@ -344,9 +428,16 @@ int main(int argc, char **argv) {
             rc = ptp(OP_InitiateOpenCapture, p0, 2, NULL, 0, NULL, NULL, NULL);
             if (rc == RC_OK) { started = YES; logln(@"  #%d rc=0x2001 OK ✓", attempt); break; }
             logln(@"  #%d rc=0x%04X%@", attempt, rc, rc == RC_DeviceBusy ? @" (busy — retrying)" : @"");
+            if (attempt == 10) {   // escalation: ForceMode(0xD230)=1 — "set by webcam app", only legal value
+                uint16_t frc = setPropU16(DPC_FUJI_ForceMode, 1);
+                logln(@"  … still busy at #10 — Set ForceMode(0xD230)=1: rc=0x%04X, retrying", frc);
+            }
             usleep(300 * 1000);
         }
-        if (!started) logln(@"→ InitiateOpenCapture never returned OK (last rc=0x%04X)", rc);
+        if (!started) {
+            logln(@"→ InitiateOpenCapture never returned OK (last rc=0x%04X)", rc);
+            dumpCurrentState(@"post-busy");
+        }
 
         // Poll the Fuji live-view handle for JPEG frames.
         logln(@"Polling live-view handle 0x80000001…");
