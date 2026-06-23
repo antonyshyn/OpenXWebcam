@@ -20,3 +20,6 @@ docs/*-HANDOFF.md
 # Xcode
 xcuserdata/
 *.xcuserstate
+
+# Swift Package Manager
+.build/
