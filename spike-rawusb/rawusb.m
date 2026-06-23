@@ -53,10 +53,12 @@ static const uint32_t LV_HANDLE = 0x80000001;   // Fuji synthetic live-view obje
 
 // Fuji vendor device-property codes (libgphoto2 camlibs/ptp2/ptp.h)
 enum {
-    DPC_FUJI_PriorityMode = 0xD207,   // 1=camera priority, 2=USB control (gphoto sets 2)
-    DPC_FUJI_CurrentState = 0xD212,   // opaque state blob (5 bytes on this cam)
-    DPC_FUJI_ForceMode    = 0xD230,   // "set by webcam app" = 1 (only legal value)
-    DPC_FUJI_PCMode       = 0xD38C,   // timelapse traffic sets 1 ("PC Mode"); unadvertised here
+    DPC_FUJI_LiveViewQuality = 0xD173, // enum [1,3] on X-T30
+    DPC_FUJI_LiveViewSize    = 0xD174, // 1=1024x768, 2=640x480, 3=320x240
+    DPC_FUJI_PriorityMode    = 0xD207, // 1=camera priority, 2=USB control (gphoto sets 2)
+    DPC_FUJI_CurrentState    = 0xD212, // opaque state blob (5 bytes on this cam)
+    DPC_FUJI_ForceMode       = 0xD230, // "set by webcam app" = 1 (only legal value)
+    DPC_FUJI_PCMode          = 0xD38C, // timelapse traffic sets 1 ("PC Mode"); unadvertised here
 };
 
 // ─── PTP response codes ───────────────────────────────────────────────────────
@@ -418,6 +420,28 @@ int main(int argc, char **argv) {
         logln(@"  Set PriorityMode(0xD207)=2: rc=0x%04X%@", prc, prc == RC_OK ? @" ✓" : @"");
         pv = 0xFFFF; prc = getPropU16(DPC_FUJI_PriorityMode, &pv);
         logln(@"  PriorityMode(0xD207) after : rc=0x%04X val=%u", prc, pv);
+
+        // optional argv: rawusb [liveViewSize] [liveViewQuality], 0 = leave as-is
+        int wantSize = argc > 1 ? atoi(argv[1]) : 0;
+        int wantQual = argc > 2 ? atoi(argv[2]) : 0;
+        if (wantSize) {
+            for (int i = 0; i < 10; i++) {
+                prc = setPropU16(DPC_FUJI_LiveViewSize, (uint16_t)wantSize);
+                if (prc != RC_DeviceBusy) break;
+                usleep(300 * 1000);
+            }
+            pv = 0xFFFF; getPropU16(DPC_FUJI_LiveViewSize, &pv);
+            logln(@"  Set LiveViewSize(0xD174)=%d: rc=0x%04X readback=%u", wantSize, prc, pv);
+        }
+        if (wantQual) {
+            for (int i = 0; i < 10; i++) {
+                prc = setPropU16(DPC_FUJI_LiveViewQuality, (uint16_t)wantQual);
+                if (prc != RC_DeviceBusy) break;
+                usleep(300 * 1000);
+            }
+            pv = 0xFFFF; getPropU16(DPC_FUJI_LiveViewQuality, &pv);
+            logln(@"  Set LiveViewQuality(0xD173)=%d: rc=0x%04X readback=%u", wantQual, prc, pv);
+        }
         dumpCurrentState(@"pre-capture");
 
         // START live view. With the Fuji prep done this should finally leave DeviceBusy.
