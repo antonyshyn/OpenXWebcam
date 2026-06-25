@@ -9,12 +9,14 @@ extern NSErrorDomain const PTPUSBErrorDomain;
 @property (nonatomic, readonly) uint16_t vendorID;
 @property (nonatomic, readonly) uint16_t productID;
 @property (nonatomic, readonly) io_service_t service;
++ (nullable instancetype)infoForService:(io_service_t)service;
 @end
 
 @interface PTPUSBTransport : NSObject
 
 + (NSArray<PTPUSBInterfaceInfo *> *)findPTPInterfaces;
 + (int)killProcessesNamed:(NSString *)name;
++ (nullable CFMutableDictionaryRef)newPTPInterfaceMatchingDictionary;
 
 - (instancetype)initWithService:(io_service_t)service;
 - (BOOL)openSeizingWithError:(NSError **)error;

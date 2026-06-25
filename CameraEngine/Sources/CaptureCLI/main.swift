@@ -8,6 +8,25 @@ func fail(_ message: String) -> Never {
 }
 
 let arguments = CommandLine.arguments
+
+if arguments.count > 1 && arguments[1] == "watch" {
+    let seconds = arguments.count > 2 ? Int(arguments[2]) ?? 60 : 60
+    let manager = CameraManager()
+    manager.onState = { state in
+        print("state: \(state)")
+    }
+    manager.onFPS = { fps in
+        print(String(format: "fps: %.1f", fps))
+    }
+    manager.start()
+    print("watching for \(seconds)s — plug, unplug, power the camera off and on")
+    DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) {
+        manager.stop()
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(1)) { exit(0) }
+    }
+    RunLoop.main.run()
+}
+
 let frameCount = arguments.count > 1 ? Int(arguments[1]) ?? 30 : 30
 let size = arguments.count > 2 ? FujiLiveViewSize(rawValue: UInt16(arguments[2]) ?? 0) : .xga
 let quality = arguments.count > 3 ? FujiLiveViewQuality(rawValue: UInt16(arguments[3]) ?? 0) : .normal

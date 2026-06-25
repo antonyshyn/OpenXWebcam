@@ -33,6 +33,20 @@ static NSError *usbError(NSString *what, IOReturn code) {
     return _service;
 }
 
++ (nullable instancetype)infoForService:(io_service_t)service {
+    if (!service) return nil;
+    uint16_t vid = 0, pid = 0;
+    io_service_t dev = IO_OBJECT_NULL;
+    if (IORegistryEntryGetParentEntry(service, kIOServicePlane, &dev) == KERN_SUCCESS) {
+        CFTypeRef v = IORegistryEntryCreateCFProperty(dev, CFSTR("idVendor"), kCFAllocatorDefault, 0);
+        CFTypeRef p = IORegistryEntryCreateCFProperty(dev, CFSTR("idProduct"), kCFAllocatorDefault, 0);
+        if (v) { vid = [(__bridge NSNumber *)v unsignedShortValue]; CFRelease(v); }
+        if (p) { pid = [(__bridge NSNumber *)p unsignedShortValue]; CFRelease(p); }
+        IOObjectRelease(dev);
+    }
+    return [[self alloc] initWithService:service vendorID:vid productID:pid];
+}
+
 - (void)dealloc {
     if (_service) IOObjectRelease(_service);
 }
@@ -47,18 +61,21 @@ static NSError *usbError(NSString *what, IOReturn code) {
     NSMutableData *_readBuffer;
 }
 
++ (nullable CFMutableDictionaryRef)newPTPInterfaceMatchingDictionary {
+    return [IOUSBHostInterface createMatchingDictionaryWithVendorID:nil
+                                                          productID:nil
+                                                          bcdDevice:nil
+                                                    interfaceNumber:nil
+                                                 configurationValue:nil
+                                                     interfaceClass:@6
+                                                  interfaceSubclass:@1
+                                                  interfaceProtocol:nil
+                                                              speed:nil
+                                                     productIDArray:nil];
+}
+
 + (NSArray<PTPUSBInterfaceInfo *> *)findPTPInterfaces {
-    CFMutableDictionaryRef match =
-        [IOUSBHostInterface createMatchingDictionaryWithVendorID:nil
-                                                       productID:nil
-                                                       bcdDevice:nil
-                                                 interfaceNumber:nil
-                                              configurationValue:nil
-                                                  interfaceClass:@6
-                                               interfaceSubclass:@1
-                                               interfaceProtocol:nil
-                                                           speed:nil
-                                                  productIDArray:nil];
+    CFMutableDictionaryRef match = [self newPTPInterfaceMatchingDictionary];
     if (!match) return @[];
 
     io_iterator_t iter = 0;
@@ -67,16 +84,8 @@ static NSError *usbError(NSString *what, IOReturn code) {
     NSMutableArray *result = [NSMutableArray array];
     io_service_t svc;
     while ((svc = IOIteratorNext(iter)) != IO_OBJECT_NULL) {
-        uint16_t vid = 0, pid = 0;
-        io_service_t dev = IO_OBJECT_NULL;
-        if (IORegistryEntryGetParentEntry(svc, kIOServicePlane, &dev) == KERN_SUCCESS) {
-            CFTypeRef v = IORegistryEntryCreateCFProperty(dev, CFSTR("idVendor"), kCFAllocatorDefault, 0);
-            CFTypeRef p = IORegistryEntryCreateCFProperty(dev, CFSTR("idProduct"), kCFAllocatorDefault, 0);
-            if (v) { vid = [(__bridge NSNumber *)v unsignedShortValue]; CFRelease(v); }
-            if (p) { pid = [(__bridge NSNumber *)p unsignedShortValue]; CFRelease(p); }
-            IOObjectRelease(dev);
-        }
-        [result addObject:[[PTPUSBInterfaceInfo alloc] initWithService:svc vendorID:vid productID:pid]];
+        PTPUSBInterfaceInfo *info = [PTPUSBInterfaceInfo infoForService:svc];
+        if (info) [result addObject:info];
         IOObjectRelease(svc);
     }
     IOObjectRelease(iter);
