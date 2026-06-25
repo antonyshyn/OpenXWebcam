@@ -1,0 +1,49 @@
+name: OpenXWebcam
+options:
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: 9F6WMC335W
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_HARDENED_RUNTIME: YES
+packages:
+  CameraEngine:
+    path: ../../CameraEngine
+targets:
+  OpenXWebcam:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    dependencies:
+      - package: CameraEngine
+      - target: OpenXWebcamExtension
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.openxwebcam.app
+        CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+    info:
+      path: App/Info.plist
+      properties:
+        LSUIElement: true
+        NSCameraUsageDescription: OpenXWebcam feeds video from your Fujifilm camera into its virtual camera.
+  OpenXWebcamExtension:
+    type: system-extension
+    platform: macOS
+    sources:
+      - Extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.openxwebcam.app.Extension
+        PRODUCT_NAME: com.openxwebcam.app.Extension
+        CODE_SIGN_ENTITLEMENTS: Extension/Extension.entitlements
+    info:
+      path: Extension/Info.plist
+      properties:
+        CMIOExtension:
+          CMIOExtensionMachServiceName: $(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)
