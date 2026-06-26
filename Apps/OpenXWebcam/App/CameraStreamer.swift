@@ -3,11 +3,11 @@ import CoreMedia
 import CoreVideo
 import ImageIO
 import CameraEngine
-import CPTPTransport
 
 final class CameraStreamer {
     enum State: Equatable {
         case idle
+        case waitingForCamera
         case connecting
         case streaming(model: String, fps: Double)
         case failed(String)
@@ -15,25 +15,56 @@ final class CameraStreamer {
 
     var onStateChange: ((State) -> Void)?
 
+    private let manager = CameraManager()
     private let sink = VirtualCameraSink()
-    private var thread: Thread?
-    private var shouldRun = false
     private var formatDescription: CMFormatDescription?
+    private var model = ""
+    private var frameSize = FujiLiveViewSize.xga.pixelSize
+
+    init() {
+        manager.onState = { [weak self] state in
+            self?.handle(state)
+        }
+        manager.onFPS = { [weak self] fps in
+            guard let self else { return }
+            self.setState(.streaming(model: self.model, fps: fps))
+        }
+        manager.onFrame = { [weak self] jpeg in
+            self?.push(jpeg)
+        }
+    }
 
     func start(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
-        guard thread == nil else { return }
-        shouldRun = true
-        let thread = Thread { [weak self] in
-            self?.run(size: size, quality: quality)
-        }
-        thread.name = "camera-streamer"
-        thread.qualityOfService = .userInteractive
-        self.thread = thread
-        thread.start()
+        frameSize = size.pixelSize
+        manager.apply(size: size, quality: quality)
+        manager.start()
     }
 
     func stop() {
-        shouldRun = false
+        manager.stop()
+        sink.disconnect()
+    }
+
+    private func handle(_ state: CameraState) {
+        switch state {
+        case .stopped:
+            sink.disconnect()
+            setState(.idle)
+        case .waitingForCamera:
+            setState(.waitingForCamera)
+        case .connecting:
+            if !sink.isConnected && !sink.connect() {
+                manager.stop()
+                setState(.failed("Virtual camera not available. Install the camera extension first."))
+                return
+            }
+            setState(.connecting)
+        case .streaming(let model):
+            self.model = model
+            setState(.streaming(model: model, fps: 0))
+        case .cameraError(let message):
+            setState(.failed(message))
+        }
     }
 
     private func setState(_ state: State) {
@@ -42,78 +73,18 @@ final class CameraStreamer {
         }
     }
 
-    private func run(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
-        defer {
-            thread = nil
-            sink.disconnect()
-            setState(.idle)
-        }
-        setState(.connecting)
-
-        guard let camera = CameraDiscovery.firstFuji() else {
-            setState(.failed("No Fujifilm camera found. Check the cable, USB mode and Auto Power Off."))
-            return
-        }
-        guard sink.connect() else {
-            setState(.failed("Virtual camera not available. Install the camera extension first."))
-            return
-        }
-
-        CameraDiscovery.killPtpcamerad()
-        let transport = PTPUSBTransport(service: camera.info.service)
-        do {
-            try transport.openSeizing()
-        } catch {
-            setState(.failed("USB open failed: \(error.localizedDescription)"))
-            return
-        }
-        defer { transport.close() }
-
-        let session = PTPSession(transport: transport)
-        do {
-            let rc = try session.open()
-            guard rc == PTPRC.ok else {
-                setState(.failed(String(format: "Session open failed: 0x%04X", rc)))
-                return
-            }
-            let model = try session.deviceInfo()?.model ?? "camera"
-            let fuji = FujiCamera(session: session)
-            try fuji.prepare(size: size, quality: quality)
-            try fuji.startLiveView()
-            setState(.streaming(model: model, fps: 0))
-
-            var frames = 0
-            var windowStart = Date()
-            while shouldRun {
-                guard let jpeg = try fuji.nextFrame() else {
-                    usleep(5000)
-                    continue
-                }
-                if let sampleBuffer = makeSampleBuffer(jpeg: jpeg, size: size) {
-                    sink.enqueue(sampleBuffer)
-                }
-                frames += 1
-                let elapsed = -windowStart.timeIntervalSinceNow
-                if elapsed >= 2 {
-                    setState(.streaming(model: model, fps: Double(frames) / elapsed))
-                    frames = 0
-                    windowStart = Date()
-                }
-            }
-            try fuji.stopLiveView()
-            _ = try session.close()
-        } catch {
-            setState(.failed("Camera error: \(error.localizedDescription)"))
-        }
+    private func push(_ jpeg: Data) {
+        guard let sampleBuffer = makeSampleBuffer(jpeg: jpeg) else { return }
+        sink.enqueue(sampleBuffer)
     }
 
-    private func makeSampleBuffer(jpeg: Data, size: FujiLiveViewSize) -> CMSampleBuffer? {
+    private func makeSampleBuffer(jpeg: Data) -> CMSampleBuffer? {
         guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
         else { return nil }
 
-        let width = size.pixelSize.width
-        let height = size.pixelSize.height
+        let width = frameSize.width
+        let height = frameSize.height
         var pixelBuffer: CVPixelBuffer?
         let attributes: [String: Any] = [
             kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],

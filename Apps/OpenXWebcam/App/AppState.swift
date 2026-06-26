@@ -42,6 +42,7 @@ final class AppState: ObservableObject {
     var statusLine: String {
         switch streamerState {
         case .idle: return "Not streaming"
+        case .waitingForCamera: return "Waiting for camera…"
         case .connecting: return "Connecting to camera…"
         case .streaming(let model, let fps):
             return fps > 0 ? String(format: "%@ — %.0f fps", model, fps) : "\(model) — starting…"
