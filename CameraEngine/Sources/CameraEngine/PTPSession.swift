@@ -112,6 +112,14 @@ public final class PTPSession {
         return PTPDeviceInfo(data)
     }
 
+    public func propertyDescription(_ property: UInt16) throws -> (rc: UInt16, desc: PTPPropDesc?) {
+        let result = try command(code: PTPOp.getDevicePropDesc, params: [UInt32(property)])
+        guard result.responseCode == PTPRC.ok, let data = result.data else {
+            return (result.responseCode, nil)
+        }
+        return (result.responseCode, PTPPropDesc(data))
+    }
+
     public func getPropU16(_ property: UInt16) throws -> (rc: UInt16, value: UInt16?) {
         let result = try command(code: PTPOp.getDevicePropValue, params: [UInt32(property)])
         guard result.responseCode == PTPRC.ok, let data = result.data, data.count >= 2 else {

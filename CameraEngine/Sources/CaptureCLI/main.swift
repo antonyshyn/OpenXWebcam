@@ -29,6 +29,49 @@ if arguments.count > 1 && arguments[1] == "watch" {
     RunLoop.main.run()
 }
 
+if arguments.count > 1 && arguments[1] == "props" {
+    guard let camera = CameraDiscovery.firstFuji() else {
+        fail("no fuji camera found; check cable, usb mode and auto power off")
+    }
+    CameraDiscovery.killPtpcamerad()
+    let transport = PTPUSBTransport(service: camera.info.service)
+    try transport.openSeizing()
+    defer { transport.close() }
+    let session = PTPSession(transport: transport)
+    guard try session.open() == PTPRC.ok else { fail("open session failed") }
+    guard let info = try session.deviceInfo() else { fail("device info failed") }
+    print("model: \(info.manufacturer) \(info.model) \(info.deviceVersion)")
+    print("advertised properties: \(info.deviceProperties.count)")
+    for code in info.deviceProperties {
+        let hex = String(format: "0x%04X", code)
+        do {
+            let result = try session.command(code: PTPOp.getDevicePropDesc, params: [UInt32(code)])
+            guard result.responseCode == PTPRC.ok else {
+                print("\(hex): rc \(String(format: "0x%04X", result.responseCode))")
+                continue
+            }
+            guard let data = result.data, let desc = PTPPropDesc(data) else {
+                let raw = (result.data ?? Data()).prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
+                print("\(hex): descriptor not parseable, raw: \(raw)")
+                continue
+            }
+            var line = "\(hex): \(desc.dataType) \(desc.isWritable ? "rw" : "ro") cur=\(desc.currentValue.description) def=\(desc.defaultValue.description)"
+            switch desc.form {
+            case .none: break
+            case .range(let min, let max, let step):
+                line += " range \(min.description)..\(max.description) step \(step.description)"
+            case .enumeration(let values):
+                line += " enum [\(values.map(\.description).joined(separator: " "))]"
+            }
+            print(line)
+        } catch {
+            print("\(hex): \(error)")
+        }
+    }
+    _ = try session.close()
+    exit(0)
+}
+
 let frameCount = arguments.count > 1 ? Int(arguments[1]) ?? 30 : 30
 let size = arguments.count > 2 ? FujiLiveViewSize(rawValue: UInt16(arguments[2]) ?? 0) : .xga
 let quality = arguments.count > 3 ? FujiLiveViewQuality(rawValue: UInt16(arguments[3]) ?? 0) : .normal
