@@ -42,6 +42,13 @@ Developed and tested with an X-T30. Other X and GFX bodies speak the same
 protocol and are expected to work; a support table will be published once the
 app is usable.
 
+## Troubleshooting
+
+- Use a data-capable USB cable. Charge-only cables look like "no camera".
+- Set Auto Power Off to OFF, or the camera drops off the bus mid-stream.
+- After unplugging mid-session the X-T30 sometimes won't re-enumerate until
+  you power it off and on with the cable connected.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
