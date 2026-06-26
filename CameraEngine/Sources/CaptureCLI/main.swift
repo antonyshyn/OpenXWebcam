@@ -7,6 +7,8 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
+setbuf(stdout, nil)
+
 let arguments = CommandLine.arguments
 
 if arguments.count > 1 && arguments[1] == "watch" {

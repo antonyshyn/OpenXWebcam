@@ -28,6 +28,7 @@ public final class CameraManager {
 
     private var streamThread: Thread?
     private var activeRegistryID: UInt64 = 0
+    private var deviceGone = false
     private let stopStreamFlag = OSAllocatedUnfairLock(initialState: false)
 
     public init(size: FujiLiveViewSize = .xga, quality: FujiLiveViewQuality = .normal) {
@@ -86,11 +87,13 @@ public final class CameraManager {
     private func cameraDetached(_ registryID: UInt64) {
         guard registryID == activeRegistryID else { return }
         activeRegistryID = 0
+        deviceGone = true
         requestStreamStop()
     }
 
     private func startStream(with info: PTPUSBInterfaceInfo) {
         stopStreamFlag.withLock { $0 = false }
+        deviceGone = false
         activeRegistryID = info.registryID
         setState(.connecting)
         let thread = Thread { [weak self] in
@@ -126,6 +129,9 @@ public final class CameraManager {
             self.activeRegistryID = 0
             if !self.running {
                 self.setState(.stopped)
+            } else if self.deviceGone {
+                self.deviceGone = false
+                self.setState(.waitingForCamera)
             } else if let lastError {
                 self.setState(.cameraError(lastError))
             } else if let camera = CameraDiscovery.firstFuji() {
