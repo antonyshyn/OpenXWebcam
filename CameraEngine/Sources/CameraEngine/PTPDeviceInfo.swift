@@ -1,6 +1,6 @@
 import Foundation
 
-public struct PTPDeviceInfo {
+public struct PTPDeviceInfo: Sendable {
     public let standardVersion: UInt16
     public let vendorExtensionID: UInt32
     public let vendorExtensionVersion: UInt16

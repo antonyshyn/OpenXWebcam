@@ -31,6 +31,7 @@ public enum FujiCameraError: Error {
     case notAFujiCamera
     case liveViewStartFailed(UInt16)
     case propertyWriteFailed(UInt16, rc: UInt16)
+    case valueNotEncodable(UInt16)
 }
 
 public final class FujiCamera {
@@ -85,6 +86,31 @@ public final class FujiCamera {
     public func stopLiveView() throws {
         _ = try session.command(code: PTPOp.terminateOpenCapture)
         _ = try setPropRetryingBusy(FujiProp.priorityMode, 1)
+    }
+
+    public func readProperties(advertised: [UInt16]) -> [CameraProperty] {
+        var result: [CameraProperty] = []
+        for code in advertised {
+            guard let (rc, desc) = try? session.propertyDescription(code),
+                  rc == PTPRC.ok, let desc,
+                  let property = FujiPropertyCatalog.property(from: desc)
+            else { continue }
+            result.append(property)
+        }
+        return result
+    }
+
+    public func setProperty(_ code: UInt16, to value: PTPPropValue, type: PTPDataType) throws -> UInt16 {
+        guard let payload = value.encoded(as: type) else {
+            throw FujiCameraError.valueNotEncodable(code)
+        }
+        var rc: UInt16 = 0
+        for _ in 0..<busyRetries {
+            rc = try session.setProp(code, payload: payload)
+            if rc != PTPRC.deviceBusy { return rc }
+            usleep(busyRetryDelay)
+        }
+        return rc
     }
 
     private func setPropRetryingBusy(_ property: UInt16, _ value: UInt16) throws -> UInt16 {

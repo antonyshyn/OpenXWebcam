@@ -131,6 +131,10 @@ public final class PTPSession {
     public func setPropU16(_ property: UInt16, _ value: UInt16) throws -> UInt16 {
         var payload = Data()
         payload.appendLE(value)
+        return try setProp(property, payload: payload)
+    }
+
+    public func setProp(_ property: UInt16, payload: Data) throws -> UInt16 {
         let result = try command(code: PTPOp.setDevicePropValue, params: [UInt32(property)], dataOut: payload)
         return result.responseCode
     }

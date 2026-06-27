@@ -18,6 +18,7 @@ public final class CameraManager {
     public var onState: ((CameraState) -> Void)?
     public var onFrame: ((Data) -> Void)?
     public var onFPS: ((Double) -> Void)?
+    public var onProperties: (([CameraProperty]) -> Void)?
 
     public private(set) var liveViewSize: FujiLiveViewSize
     public private(set) var liveViewQuality: FujiLiveViewQuality
@@ -30,6 +31,14 @@ public final class CameraManager {
     private var activeRegistryID: UInt64 = 0
     private var deviceGone = false
     private let stopStreamFlag = OSAllocatedUnfairLock(initialState: false)
+    private let latestDeviceInfo = OSAllocatedUnfairLock<PTPDeviceInfo?>(initialState: nil)
+    private let pendingWrites = OSAllocatedUnfairLock<[PropertyWrite]>(initialState: [])
+
+    private struct PropertyWrite: Sendable {
+        let code: UInt16
+        let value: PTPPropValue
+        let type: PTPDataType
+    }
 
     public init(size: FujiLiveViewSize = .xga, quality: FujiLiveViewQuality = .normal) {
         liveViewSize = size
@@ -71,6 +80,16 @@ public final class CameraManager {
         }
     }
 
+    public var deviceInfo: PTPDeviceInfo? {
+        latestDeviceInfo.withLock { $0 }
+    }
+
+    public func set(property: CameraProperty, to value: PTPPropValue) {
+        pendingWrites.withLock {
+            $0.append(PropertyWrite(code: property.code, value: value, type: property.dataType))
+        }
+    }
+
     private var streamStopRequested: Bool {
         stopStreamFlag.withLock { $0 }
     }
@@ -93,6 +112,7 @@ public final class CameraManager {
 
     private func startStream(with info: PTPUSBInterfaceInfo) {
         stopStreamFlag.withLock { $0 = false }
+        pendingWrites.withLock { $0.removeAll() }
         deviceGone = false
         activeRegistryID = info.registryID
         setState(.connecting)
@@ -118,12 +138,14 @@ public final class CameraManager {
                 break
             } catch {
                 lastError = describe(error)
+                EngineLog.add("stream error: \(lastError ?? "")")
                 guard !streamStopRequested, let delay = retry.nextDelay() else { break }
                 CameraDiscovery.killPtpcamerad()
                 Thread.sleep(forTimeInterval: delay)
             }
         }
 
+        onProperties?([])
         controlQueue.async {
             self.streamThread = nil
             self.activeRegistryID = 0
@@ -153,15 +175,20 @@ public final class CameraManager {
         guard rc == PTPRC.ok else {
             throw CameraManagerError.sessionOpenFailed(rc)
         }
-        let model = try session.deviceInfo()?.model ?? "camera"
+        let info = try session.deviceInfo()
+        latestDeviceInfo.withLock { $0 = info }
+        let model = info?.model ?? "camera"
+        let advertised = info?.deviceProperties ?? []
         let fuji = FujiCamera(session: session)
         try fuji.prepare(size: size, quality: quality)
         try fuji.startLiveView()
         setState(.streaming(model: model))
+        onProperties?(fuji.readProperties(advertised: advertised))
 
         var frames = 0
         var windowStart = Date()
         while !streamStopRequested {
+            applyPendingWrites(to: fuji, advertised: advertised)
             guard let jpeg = try fuji.nextFrame() else {
                 usleep(5000)
                 continue
@@ -179,6 +206,23 @@ public final class CameraManager {
         _ = try? session.close()
     }
 
+    private func applyPendingWrites(to fuji: FujiCamera, advertised: [UInt16]) {
+        let writes = pendingWrites.withLock { pending in
+            defer { pending.removeAll() }
+            return pending
+        }
+        guard !writes.isEmpty else { return }
+        for write in writes {
+            do {
+                let rc = try fuji.setProperty(write.code, to: write.value, type: write.type)
+                EngineLog.add(String(format: "set 0x%04X = %@, rc 0x%04X", write.code, write.value.description, rc))
+            } catch {
+                EngineLog.add(String(format: "set 0x%04X failed: %@", write.code, String(describing: error)))
+            }
+        }
+        onProperties?(fuji.readProperties(advertised: advertised))
+    }
+
     private func describe(_ error: Error) -> String {
         if case CameraManagerError.sessionOpenFailed(let rc) = error {
             return String(format: "Session open failed (0x%04X)", rc)
@@ -191,12 +235,15 @@ public final class CameraManager {
                 return String(format: "Live view refused (0x%04X). Check the camera's USB mode.", rc)
             case .propertyWriteFailed(let prop, let rc):
                 return String(format: "Camera setup failed (prop 0x%04X, rc 0x%04X)", prop, rc)
+            case .valueNotEncodable(let prop):
+                return String(format: "Unsupported value for prop 0x%04X", prop)
             }
         }
         return (error as NSError).localizedDescription
     }
 
     private func setState(_ state: CameraState) {
+        EngineLog.add("state: \(state)")
         onState?(state)
     }
 }

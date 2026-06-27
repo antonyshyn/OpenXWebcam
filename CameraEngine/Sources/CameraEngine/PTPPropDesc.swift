@@ -1,6 +1,6 @@
 import Foundation
 
-public enum PTPDataType: UInt16 {
+public enum PTPDataType: UInt16, Sendable {
     case int8 = 0x0001
     case uint8 = 0x0002
     case int16 = 0x0003
@@ -12,7 +12,7 @@ public enum PTPDataType: UInt16 {
     case string = 0xFFFF
 }
 
-public enum PTPPropValue: Equatable {
+public enum PTPPropValue: Hashable, Sendable {
     case int(Int64)
     case uint(UInt64)
     case string(String)
@@ -23,6 +23,33 @@ public enum PTPPropValue: Equatable {
         case .uint(let v): return String(v)
         case .string(let s): return "\"\(s)\""
         }
+    }
+
+    public func encoded(as type: PTPDataType) -> Data? {
+        var data = Data()
+        switch (type, self) {
+        case (.int8, .int(let v)):
+            data.append(UInt8(bitPattern: Int8(clamping: v)))
+        case (.uint8, .uint(let v)):
+            data.append(UInt8(clamping: v))
+        case (.int16, .int(let v)):
+            data.appendLE(UInt16(bitPattern: Int16(clamping: v)))
+        case (.uint16, .uint(let v)):
+            data.appendLE(UInt16(clamping: v))
+        case (.int32, .int(let v)):
+            data.appendLE(UInt32(bitPattern: Int32(clamping: v)))
+        case (.uint32, .uint(let v)):
+            data.appendLE(UInt32(clamping: v))
+        case (.int64, .int(let v)):
+            data.appendLE(UInt32(UInt64(bitPattern: v) & 0xFFFF_FFFF))
+            data.appendLE(UInt32(UInt64(bitPattern: v) >> 32))
+        case (.uint64, .uint(let v)):
+            data.appendLE(UInt32(v & 0xFFFF_FFFF))
+            data.appendLE(UInt32(v >> 32))
+        default:
+            return nil
+        }
+        return data
     }
 }
 
