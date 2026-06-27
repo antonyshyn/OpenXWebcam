@@ -84,6 +84,16 @@ public final class CameraManager {
         latestDeviceInfo.withLock { $0 }
     }
 
+    public func waitUntilIdle(timeout: TimeInterval) {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while Date() < deadline {
+            if controlQueue.sync(execute: { streamThread == nil }) {
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+    }
+
     public func set(property: CameraProperty, to value: PTPPropValue) {
         pendingWrites.withLock {
             $0.append(PropertyWrite(code: property.code, value: value, type: property.dataType))

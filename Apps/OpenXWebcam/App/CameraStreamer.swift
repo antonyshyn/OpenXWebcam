@@ -26,6 +26,8 @@ final class CameraStreamer {
     private var formatDescription: CMFormatDescription?
     private var model = ""
     private var frameSize = FujiLiveViewSize.xga.pixelSize
+    private var sinkStalledFrames = 0
+    private var decodeFailures = 0
 
     init() {
         manager.onState = { [weak self] state in
@@ -68,6 +70,12 @@ final class CameraStreamer {
         sink.disconnect()
     }
 
+    func stopAndWait(timeout: TimeInterval) {
+        manager.stop()
+        sink.disconnect()
+        manager.waitUntilIdle(timeout: timeout)
+    }
+
     private func handle(_ state: CameraState) {
         switch state {
         case .stopped:
@@ -77,6 +85,7 @@ final class CameraStreamer {
             setState(.waitingForCamera)
         case .connecting:
             if !sink.isConnected && !sink.connect() {
+                EngineLog.add("sink connect failed")
                 manager.stop()
                 setState(.failed("Virtual camera not available. Install the camera extension first."))
                 return
@@ -99,10 +108,28 @@ final class CameraStreamer {
     private func push(_ jpeg: Data) {
         guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
-        else { return }
+        else {
+            decodeFailures += 1
+            if decodeFailures == 1 {
+                EngineLog.add("frame decode failed")
+            }
+            return
+        }
 
         if let sampleBuffer = makeSampleBuffer(image: image) {
-            sink.enqueue(sampleBuffer)
+            if sink.enqueue(sampleBuffer) {
+                sinkStalledFrames = 0
+            } else {
+                sinkStalledFrames += 1
+                if sinkStalledFrames == 60 {
+                    EngineLog.add("sink not draining, reconnecting")
+                    sink.disconnect()
+                    if !sink.connect() {
+                        EngineLog.add("sink reconnect failed")
+                    }
+                    sinkStalledFrames = 0
+                }
+            }
         }
 
         let wantsPreview = previewEnabled.withLock { $0 }

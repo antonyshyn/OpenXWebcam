@@ -32,6 +32,7 @@ targets:
       path: App/Info.plist
       properties:
         LSUIElement: true
+        CFBundleShortVersionString: $(MARKETING_VERSION)
         NSCameraUsageDescription: OpenXWebcam feeds video from your Fujifilm camera into its virtual camera.
   OpenXWebcamExtension:
     type: system-extension

@@ -41,8 +41,15 @@ final class AppState: ObservableObject {
             self?.previewImage = image
         }
         streamer.setPreviewEnabled(showPreview)
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
+                                               object: nil, queue: .main) { [streamer] _ in
+            streamer.stopAndWait(timeout: 2)
+        }
         DispatchQueue.main.async { [installer] in
             installer.install()
+        }
+        if UserDefaults.standard.bool(forKey: "autoStart") {
+            startStreaming()
         }
     }
 
@@ -74,10 +81,12 @@ final class AppState: ObservableObject {
     }
 
     func startStreaming() {
+        UserDefaults.standard.set(true, forKey: "autoStart")
         streamer.start(size: liveViewSize, quality: liveViewQuality)
     }
 
     func stopStreaming() {
+        UserDefaults.standard.set(false, forKey: "autoStart")
         streamer.stop()
     }
 
