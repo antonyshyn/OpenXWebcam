@@ -14,6 +14,7 @@ final class CameraStreamer {
     }
 
     var onStateChange: ((State) -> Void)?
+    var onPropertiesChange: (([CameraProperty]) -> Void)?
 
     private let manager = CameraManager()
     private let sink = VirtualCameraSink()
@@ -32,6 +33,19 @@ final class CameraStreamer {
         manager.onFrame = { [weak self] jpeg in
             self?.push(jpeg)
         }
+        manager.onProperties = { [weak self] properties in
+            DispatchQueue.main.async {
+                self?.onPropertiesChange?(properties)
+            }
+        }
+    }
+
+    var deviceInfo: PTPDeviceInfo? {
+        manager.deviceInfo
+    }
+
+    func set(property: CameraProperty, to value: PTPPropValue) {
+        manager.set(property: property, to: value)
     }
 
     func start(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {

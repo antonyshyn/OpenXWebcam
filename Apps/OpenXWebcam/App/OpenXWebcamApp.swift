@@ -24,8 +24,22 @@ struct OpenXWebcamApp: App {
                 Text("Smooth").tag(FujiLiveViewQuality.normal)
                 Text("Fine").tag(FujiLiveViewQuality.fine)
             }
+            if !state.configurableProperties.isEmpty {
+                Divider()
+                ForEach(state.configurableProperties) { property in
+                    Picker(property.name, selection: Binding(
+                        get: { property.currentValue },
+                        set: { state.set(property, to: $0) }
+                    )) {
+                        ForEach(property.choices, id: \.value) { choice in
+                            Text(choice.label).tag(choice.value)
+                        }
+                    }
+                }
+            }
             Divider()
             Button("Install Camera Extension") { state.installExtension() }
+            Button("Copy Diagnostics") { state.copyDiagnostics() }
             Divider()
             Button("Quit OpenXWebcam") { NSApplication.shared.terminate(nil) }
         }

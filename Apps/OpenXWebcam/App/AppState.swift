@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Combine
 import CameraEngine
 
@@ -8,6 +8,7 @@ final class AppState: ObservableObject {
     @Published var streamerState: CameraStreamer.State = .idle
     @Published var liveViewSize: FujiLiveViewSize = .xga
     @Published var liveViewQuality: FujiLiveViewQuality = .normal
+    @Published var cameraProperties: [CameraProperty] = []
 
     private let installer = ExtensionInstaller()
     private let streamer = CameraStreamer()
@@ -19,6 +20,26 @@ final class AppState: ObservableObject {
         streamer.onStateChange = { [weak self] state in
             self?.streamerState = state
         }
+        streamer.onPropertiesChange = { [weak self] properties in
+            self?.cameraProperties = properties
+        }
+    }
+
+    var configurableProperties: [CameraProperty] {
+        cameraProperties.filter { $0.isWritable && $0.choices.count > 1 }
+    }
+
+    func set(_ property: CameraProperty, to value: PTPPropValue) {
+        streamer.set(property: property, to: value)
+    }
+
+    func copyDiagnostics() {
+        let report = Diagnostics.report(statusLine: statusLine,
+                                        extensionLine: extensionLine,
+                                        deviceInfo: streamer.deviceInfo,
+                                        properties: cameraProperties)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(report, forType: .string)
     }
 
     var isStreaming: Bool {
