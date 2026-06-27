@@ -9,19 +9,40 @@ final class AppState: ObservableObject {
     @Published var liveViewSize: FujiLiveViewSize = .xga
     @Published var liveViewQuality: FujiLiveViewQuality = .normal
     @Published var cameraProperties: [CameraProperty] = []
+    @Published var previewImage: CGImage?
+    @Published var showPreview: Bool {
+        didSet {
+            UserDefaults.standard.set(showPreview, forKey: "showPreview")
+            streamer.setPreviewEnabled(showPreview)
+            if !showPreview {
+                previewImage = nil
+            }
+        }
+    }
 
     private let installer = ExtensionInstaller()
     private let streamer = CameraStreamer()
 
     init() {
+        showPreview = UserDefaults.standard.object(forKey: "showPreview") as? Bool ?? true
         installer.onStatusChange = { [weak self] status in
             self?.extensionStatus = status
         }
         streamer.onStateChange = { [weak self] state in
             self?.streamerState = state
+            if case .streaming = state {} else {
+                self?.previewImage = nil
+            }
         }
         streamer.onPropertiesChange = { [weak self] properties in
             self?.cameraProperties = properties
+        }
+        streamer.onPreviewFrame = { [weak self] image in
+            self?.previewImage = image
+        }
+        streamer.setPreviewEnabled(showPreview)
+        DispatchQueue.main.async { [installer] in
+            installer.install()
         }
     }
 

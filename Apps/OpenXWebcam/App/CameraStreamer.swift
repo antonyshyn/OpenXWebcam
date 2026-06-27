@@ -2,6 +2,7 @@ import Foundation
 import CoreMedia
 import CoreVideo
 import ImageIO
+import os
 import CameraEngine
 
 final class CameraStreamer {
@@ -15,9 +16,13 @@ final class CameraStreamer {
 
     var onStateChange: ((State) -> Void)?
     var onPropertiesChange: (([CameraProperty]) -> Void)?
+    var onPreviewFrame: ((CGImage) -> Void)?
 
     private let manager = CameraManager()
     private let sink = VirtualCameraSink()
+    private let previewEnabled = OSAllocatedUnfairLock(initialState: false)
+    private let previewInterval: TimeInterval = 1.0 / 15
+    private var lastPreviewAt = Date.distantPast
     private var formatDescription: CMFormatDescription?
     private var model = ""
     private var frameSize = FujiLiveViewSize.xga.pixelSize
@@ -46,6 +51,10 @@ final class CameraStreamer {
 
     func set(property: CameraProperty, to value: PTPPropValue) {
         manager.set(property: property, to: value)
+    }
+
+    func setPreviewEnabled(_ enabled: Bool) {
+        previewEnabled.withLock { $0 = enabled }
     }
 
     func start(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
@@ -88,15 +97,24 @@ final class CameraStreamer {
     }
 
     private func push(_ jpeg: Data) {
-        guard let sampleBuffer = makeSampleBuffer(jpeg: jpeg) else { return }
-        sink.enqueue(sampleBuffer)
-    }
-
-    private func makeSampleBuffer(jpeg: Data) -> CMSampleBuffer? {
         guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
-        else { return nil }
+        else { return }
 
+        if let sampleBuffer = makeSampleBuffer(image: image) {
+            sink.enqueue(sampleBuffer)
+        }
+
+        let wantsPreview = previewEnabled.withLock { $0 }
+        if wantsPreview && -lastPreviewAt.timeIntervalSinceNow >= previewInterval {
+            lastPreviewAt = Date()
+            DispatchQueue.main.async { [onPreviewFrame] in
+                onPreviewFrame?(image)
+            }
+        }
+    }
+
+    private func makeSampleBuffer(image: CGImage) -> CMSampleBuffer? {
         let width = frameSize.width
         let height = frameSize.height
         var pixelBuffer: CVPixelBuffer?
