@@ -4,5 +4,9 @@
 <dict>
 	<key>com.apple.developer.system-extension.install</key>
 	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(TeamIdentifierPrefix)com.openxwebcam</string>
+	</array>
 </dict>
 </plist>

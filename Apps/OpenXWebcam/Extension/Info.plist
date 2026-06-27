@@ -12,6 +12,8 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>SYSX</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
@@ -21,5 +23,7 @@
 		<key>CMIOExtensionMachServiceName</key>
 		<string>$(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	</dict>
+	<key>NSSystemExtensionUsageDescription</key>
+	<string>Virtual camera fed by your Fujifilm camera.</string>
 </dict>
 </plist>
