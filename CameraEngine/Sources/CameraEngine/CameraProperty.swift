@@ -18,6 +18,11 @@ public struct CameraProperty: Equatable, Identifiable, Sendable {
     public var currentLabel: String {
         FujiPropertyCatalog.label(code: code, value: currentValue)
     }
+
+    public func asReadOnly() -> CameraProperty {
+        CameraProperty(code: code, name: name, dataType: dataType,
+                       isWritable: false, currentValue: currentValue, choices: choices)
+    }
 }
 
 public enum FujiPropertyCatalog {
@@ -86,6 +91,10 @@ public enum FujiPropertyCatalog {
 
     public static func name(for code: UInt16) -> String {
         names[code] ?? String(format: "Property 0x%04X", code)
+    }
+
+    public static func isKnown(_ code: UInt16) -> Bool {
+        names[code] != nil
     }
 
     public static func label(code: UInt16, value: PTPPropValue) -> String {

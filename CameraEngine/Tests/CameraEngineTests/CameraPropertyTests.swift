@@ -57,6 +57,21 @@ final class CameraPropertyTests: XCTestCase {
         XCTAssertEqual(property?.choices.map(\.value), [.uint(1), .uint(2), .uint(11)])
     }
 
+    func testKnownCodes() {
+        XCTAssertTrue(FujiPropertyCatalog.isKnown(0xD001))
+        XCTAssertFalse(FujiPropertyCatalog.isKnown(0xD21C))
+    }
+
+    func testAsReadOnly() {
+        let property = CameraProperty(code: 0xD201, name: "Release Mode", dataType: .uint16,
+                                      isWritable: true, currentValue: .uint(4),
+                                      choices: [.init(value: .uint(4), label: "4")])
+        let demoted = property.asReadOnly()
+        XCTAssertFalse(demoted.isWritable)
+        XCTAssertEqual(demoted.code, property.code)
+        XCTAssertEqual(demoted.choices, property.choices)
+    }
+
     func testValueEncoding() {
         XCTAssertEqual(PTPPropValue.uint(2).encoded(as: .uint16), Data([0x02, 0x00]))
         XCTAssertEqual(PTPPropValue.int(-1000).encoded(as: .int16), Data([0x18, 0xFC]))

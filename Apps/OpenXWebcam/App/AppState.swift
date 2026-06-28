@@ -66,7 +66,9 @@ final class AppState: ObservableObject {
     }
 
     var configurableProperties: [CameraProperty] {
-        cameraProperties.filter { $0.isWritable && $0.choices.count > 1 }
+        cameraProperties.filter {
+            $0.isWritable && $0.choices.count > 1 && FujiPropertyCatalog.isKnown($0.code)
+        }
     }
 
     func set(_ property: CameraProperty, to value: PTPPropValue) {

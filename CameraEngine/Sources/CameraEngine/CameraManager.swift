@@ -30,6 +30,7 @@ public final class CameraManager {
     private var streamThread: Thread?
     private var activeRegistryID: UInt64 = 0
     private var deviceGone = false
+    private var lockedProps: Set<UInt16> = []
     private let stopStreamFlag = OSAllocatedUnfairLock(initialState: false)
     private let latestDeviceInfo = OSAllocatedUnfairLock<PTPDeviceInfo?>(initialState: nil)
     private let pendingWrites = OSAllocatedUnfairLock<[PropertyWrite]>(initialState: [])
@@ -193,7 +194,8 @@ public final class CameraManager {
         try fuji.prepare(size: size, quality: quality)
         try fuji.startLiveView()
         setState(.streaming(model: model))
-        onProperties?(fuji.readProperties(advertised: advertised))
+        lockedProps = []
+        publishProperties(from: fuji, advertised: advertised)
 
         var frames = 0
         var windowStart = Date()
@@ -224,13 +226,29 @@ public final class CameraManager {
         guard !writes.isEmpty else { return }
         for write in writes {
             do {
-                let rc = try fuji.setProperty(write.code, to: write.value, type: write.type)
+                let rc = try fuji.applyProperty(write.code, to: write.value, type: write.type)
                 EngineLog.add(String(format: "set 0x%04X = %@, rc 0x%04X", write.code, write.value.description, rc))
             } catch {
                 EngineLog.add(String(format: "set 0x%04X failed: %@", write.code, String(describing: error)))
             }
         }
-        onProperties?(fuji.readProperties(advertised: advertised))
+        let properties = fuji.readProperties(advertised: advertised)
+        for write in writes {
+            guard let property = properties.first(where: { $0.code == write.code }),
+                  property.currentValue != write.value
+            else { continue }
+            lockedProps.insert(write.code)
+            EngineLog.add(String(format: "0x%04X kept its old value, treating as read-only", write.code))
+        }
+        publish(properties)
+    }
+
+    private func publishProperties(from fuji: FujiCamera, advertised: [UInt16]) {
+        publish(fuji.readProperties(advertised: advertised))
+    }
+
+    private func publish(_ properties: [CameraProperty]) {
+        onProperties?(properties.map { lockedProps.contains($0.code) ? $0.asReadOnly() : $0 })
     }
 
     private func describe(_ error: Error) -> String {

@@ -100,15 +100,25 @@ public final class FujiCamera {
         return result
     }
 
-    public func setProperty(_ code: UInt16, to value: PTPPropValue, type: PTPDataType) throws -> UInt16 {
+    public func setProperty(_ code: UInt16, to value: PTPPropValue, type: PTPDataType, retries: Int? = nil) throws -> UInt16 {
         guard let payload = value.encoded(as: type) else {
             throw FujiCameraError.valueNotEncodable(code)
         }
         var rc: UInt16 = 0
-        for _ in 0..<busyRetries {
+        for _ in 0..<(retries ?? busyRetries) {
             rc = try session.setProp(code, payload: payload)
             if rc != PTPRC.deviceBusy { return rc }
             usleep(busyRetryDelay)
+        }
+        return rc
+    }
+
+    public func applyProperty(_ code: UInt16, to value: PTPPropValue, type: PTPDataType) throws -> UInt16 {
+        var rc = try setProperty(code, to: value, type: type, retries: 2)
+        if rc == PTPRC.deviceBusy {
+            _ = try session.command(code: PTPOp.terminateOpenCapture)
+            rc = try setProperty(code, to: value, type: type)
+            try startLiveView()
         }
         return rc
     }

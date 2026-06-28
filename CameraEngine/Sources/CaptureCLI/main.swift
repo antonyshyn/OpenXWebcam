@@ -72,6 +72,40 @@ if arguments.count > 1 && arguments[1] == "props" {
     exit(0)
 }
 
+if arguments.count > 3 && arguments[1] == "setprop" {
+    guard let code = UInt16(arguments[2].replacingOccurrences(of: "0x", with: ""), radix: 16),
+          let value = UInt64(arguments[3])
+    else { fail("usage: setprop 0xD201 <value>") }
+    guard let camera = CameraDiscovery.firstFuji() else {
+        fail("no fuji camera found; check cable, usb mode and auto power off")
+    }
+    CameraDiscovery.killPtpcamerad()
+    let transport = PTPUSBTransport(service: camera.info.service)
+    try transport.openSeizing()
+    defer { transport.close() }
+    let session = PTPSession(transport: transport)
+    guard try session.open() == PTPRC.ok else { fail("open session failed") }
+    let fuji = FujiCamera(session: session)
+    try fuji.prepare()
+    try fuji.startLiveView()
+    for _ in 0..<5 { _ = try fuji.nextFrame() }
+    let before = try session.propertyDescription(code)
+    print("before: rc \(String(format: "0x%04X", before.rc)) cur=\(before.desc?.currentValue.description ?? "?") type=\(before.desc.map { String(describing: $0.dataType) } ?? "?") writable=\(before.desc?.isWritable ?? false)")
+    let type = before.desc?.dataType ?? .uint16
+    let liveRC = try fuji.setProperty(code, to: .uint(value), type: type)
+    print("set during live view: rc \(String(format: "0x%04X", liveRC))")
+    _ = try session.command(code: PTPOp.terminateOpenCapture)
+    let pausedRC = try fuji.setProperty(code, to: .uint(value), type: type)
+    print("set with live view paused: rc \(String(format: "0x%04X", pausedRC))")
+    try fuji.startLiveView()
+    for _ in 0..<3 { _ = try fuji.nextFrame() }
+    let after = try session.propertyDescription(code)
+    print("after: cur=\(after.desc?.currentValue.description ?? "?")")
+    try fuji.stopLiveView()
+    _ = try session.close()
+    exit(0)
+}
+
 let frameCount = arguments.count > 1 ? Int(arguments[1]) ?? 30 : 30
 let size = arguments.count > 2 ? FujiLiveViewSize(rawValue: UInt16(arguments[2]) ?? 0) : .xga
 let quality = arguments.count > 3 ? FujiLiveViewQuality(rawValue: UInt16(arguments[3]) ?? 0) : .normal
