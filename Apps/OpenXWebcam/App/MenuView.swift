@@ -66,6 +66,6 @@ struct MenuView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .aspectRatio(4.0 / 3.0, contentMode: .fit)
+        .frame(width: 276, height: 207)
     }
 }
