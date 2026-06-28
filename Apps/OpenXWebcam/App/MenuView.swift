@@ -26,8 +26,8 @@ struct MenuView: View {
                 Text("320×240").tag(FujiLiveViewSize.qvga)
             }
             Picker("Quality", selection: $state.liveViewQuality) {
-                Text("Smooth").tag(FujiLiveViewQuality.normal)
-                Text("Fine").tag(FujiLiveViewQuality.fine)
+                Text("Smooth — higher fps").tag(FujiLiveViewQuality.normal)
+                Text("Fine — sharper image").tag(FujiLiveViewQuality.fine)
             }
             ForEach(state.configurableProperties) { property in
                 Picker(property.name, selection: Binding(

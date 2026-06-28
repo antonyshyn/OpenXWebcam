@@ -6,8 +6,18 @@ import CameraEngine
 final class AppState: ObservableObject {
     @Published var extensionStatus: ExtensionInstaller.Status = .unknown
     @Published var streamerState: CameraStreamer.State = .idle
-    @Published var liveViewSize: FujiLiveViewSize = .xga
-    @Published var liveViewQuality: FujiLiveViewQuality = .normal
+    @Published var liveViewSize: FujiLiveViewSize {
+        didSet {
+            UserDefaults.standard.set(Int(liveViewSize.rawValue), forKey: "liveViewSize")
+            streamer.apply(size: liveViewSize, quality: liveViewQuality)
+        }
+    }
+    @Published var liveViewQuality: FujiLiveViewQuality {
+        didSet {
+            UserDefaults.standard.set(Int(liveViewQuality.rawValue), forKey: "liveViewQuality")
+            streamer.apply(size: liveViewSize, quality: liveViewQuality)
+        }
+    }
     @Published var cameraProperties: [CameraProperty] = []
     @Published var previewImage: CGImage?
     @Published var showPreview: Bool {
@@ -25,6 +35,8 @@ final class AppState: ObservableObject {
 
     init() {
         showPreview = UserDefaults.standard.object(forKey: "showPreview") as? Bool ?? true
+        liveViewSize = FujiLiveViewSize(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewSize"))) ?? .xga
+        liveViewQuality = FujiLiveViewQuality(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewQuality"))) ?? .normal
         installer.onStatusChange = { [weak self] status in
             self?.extensionStatus = status
         }

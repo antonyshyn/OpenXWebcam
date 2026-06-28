@@ -65,6 +65,11 @@ final class CameraStreamer {
         manager.start()
     }
 
+    func apply(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
+        frameSize = size.pixelSize
+        manager.apply(size: size, quality: quality)
+    }
+
     func stop() {
         manager.stop()
         sink.disconnect()
