@@ -72,6 +72,31 @@ if arguments.count > 1 && arguments[1] == "props" {
     exit(0)
 }
 
+if arguments.count > 2 && arguments[1] == "getprop" {
+    guard let camera = CameraDiscovery.firstFuji() else {
+        fail("no fuji camera found; check cable, usb mode and auto power off")
+    }
+    CameraDiscovery.killPtpcamerad()
+    let transport = PTPUSBTransport(service: camera.info.service)
+    try transport.openSeizing()
+    defer { transport.close() }
+    let session = PTPSession(transport: transport)
+    guard try session.open() == PTPRC.ok else { fail("open session failed") }
+    for argument in arguments[2...] {
+        guard let code = UInt16(argument.replacingOccurrences(of: "0x", with: ""), radix: 16) else { continue }
+        let hex = String(format: "0x%04X", code)
+        let desc = try session.propertyDescription(code)
+        guard desc.rc == PTPRC.ok else {
+            print("\(hex): rc \(String(format: "0x%04X", desc.rc))")
+            continue
+        }
+        let value = try session.getPropU16(code)
+        print("\(hex): desc cur=\(desc.desc?.currentValue.description ?? "unparseable") value=\(value.value.map(String.init) ?? "?")")
+    }
+    _ = try session.close()
+    exit(0)
+}
+
 if arguments.count > 3 && arguments[1] == "setprop" {
     guard let code = UInt16(arguments[2].replacingOccurrences(of: "0x", with: ""), radix: 16),
           let value = UInt64(arguments[3])
