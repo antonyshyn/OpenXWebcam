@@ -25,7 +25,6 @@ final class CameraStreamer {
     private var lastPreviewAt = Date.distantPast
     private var formatDescription: CMFormatDescription?
     private var model = ""
-    private var frameSize = FujiLiveViewSize.xga.pixelSize
     private var sinkStalledFrames = 0
     private var decodeFailures = 0
 
@@ -60,13 +59,11 @@ final class CameraStreamer {
     }
 
     func start(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
-        frameSize = size.pixelSize
         manager.apply(size: size, quality: quality)
         manager.start()
     }
 
     func apply(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
-        frameSize = size.pixelSize
         manager.apply(size: size, quality: quality)
     }
 
@@ -112,7 +109,7 @@ final class CameraStreamer {
 
     private func push(_ jpeg: Data) {
         guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
+              let decoded = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
         else {
             decodeFailures += 1
             if decodeFailures == 1 {
@@ -120,6 +117,7 @@ final class CameraStreamer {
             }
             return
         }
+        let image = cropLetterbox(decoded)
 
         if let sampleBuffer = makeSampleBuffer(image: image) {
             if sink.enqueue(sampleBuffer) {
@@ -146,9 +144,17 @@ final class CameraStreamer {
         }
     }
 
+    private func cropLetterbox(_ image: CGImage) -> CGImage {
+        guard image.height * 4 == image.width * 3 else { return image }
+        let contentHeight = image.width * 2 / 3
+        let bar = (image.height - contentHeight) / 2
+        let content = CGRect(x: 0, y: bar, width: image.width, height: contentHeight)
+        return image.cropping(to: content) ?? image
+    }
+
     private func makeSampleBuffer(image: CGImage) -> CMSampleBuffer? {
-        let width = frameSize.width
-        let height = frameSize.height
+        let width = image.width
+        let height = image.height
         var pixelBuffer: CVPixelBuffer?
         let attributes: [String: Any] = [
             kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
@@ -167,7 +173,8 @@ final class CameraStreamer {
         }
         CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
 
-        if formatDescription == nil || CMVideoFormatDescriptionGetDimensions(formatDescription!).width != Int32(width) {
+        let dimensions = formatDescription.map(CMVideoFormatDescriptionGetDimensions)
+        if dimensions?.width != Int32(width) || dimensions?.height != Int32(height) {
             var description: CMFormatDescription?
             CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: pixelBuffer, formatDescriptionOut: &description)
             formatDescription = description

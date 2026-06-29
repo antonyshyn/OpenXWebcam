@@ -66,6 +66,6 @@ struct MenuView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(width: 276, height: 207)
+        .frame(width: 276, height: 184)
     }
 }
