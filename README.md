@@ -34,12 +34,23 @@ offers settings the camera actually has.
 Have an unconfirmed body? Try it and open an issue with the output of
 "Copy Diagnostics" from the settings menu.
 
+## Camera setup
+
+- USB MODE: `X WEBCAM` (MENU → CONNECTION SETTING → USB MODE).
+- Auto Power Off: OFF.
+- Focus: the camera's own AF settings stay in charge while streaming. Set the
+  focus switch to AF-C and turn on Face/Eye detection for hands-free focus;
+  half-pressing the shutter refocuses too. Focus can't be driven over USB in
+  webcam mode — the camera doesn't expose it.
+
 ## Troubleshooting
 
 - Use a data-capable USB cable. Charge-only cables look like "no camera".
 - Set Auto Power Off to OFF, or the camera drops off the bus mid-stream.
 - After unplugging mid-session the X-T30 sometimes won't re-enumerate until
-  you power it off and on with the cable connected.
+  you power it off and on with the cable connected, or replug the cable.
+- The USB MOVIE SHOOTING modes don't connect to a computer at all (they're
+  for gimbals and remotes). Use `X WEBCAM`.
 
 ## License
 
