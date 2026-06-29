@@ -3,6 +3,7 @@ import Foundation
 public enum FujiProp {
     public static let liveViewQuality: UInt16 = 0xD173
     public static let liveViewSize: UInt16 = 0xD174
+    public static let releaseMode: UInt16 = 0xD201
     public static let priorityMode: UInt16 = 0xD207
     public static let currentState: UInt16 = 0xD212
     public static let forceMode: UInt16 = 0xD230

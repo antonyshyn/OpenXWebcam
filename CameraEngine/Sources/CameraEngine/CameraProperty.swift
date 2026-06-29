@@ -36,7 +36,6 @@ public enum FujiPropertyCatalog {
         0xD02B: "Movie ISO",
         0xD173: "Live View Quality",
         0xD174: "Live View Size",
-        0xD201: "Release Mode",
         0xD207: "USB Priority",
         0xD36A: "Battery",
     ]
@@ -44,6 +43,7 @@ public enum FujiPropertyCatalog {
     static let hidden: Set<UInt16> = [
         FujiProp.liveViewQuality,
         FujiProp.liveViewSize,
+        FujiProp.releaseMode,
         FujiProp.priorityMode,
         FujiProp.currentState,
         FujiProp.forceMode,
