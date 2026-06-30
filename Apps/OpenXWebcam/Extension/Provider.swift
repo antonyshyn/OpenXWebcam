@@ -1,7 +1,7 @@
 import Foundation
 import CoreMediaIO
 import CoreVideo
-import CoreText
+import ImageIO
 import IOKit.audio
 
 let cameraWidth = 1024
@@ -179,9 +179,13 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
                                    bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
                                    space: CGColorSpaceCreateDeviceRGB(),
                                    bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue) {
-            context.setFillColor(CGColor(red: 0.10, green: 0.11, blue: 0.13, alpha: 1))
+            context.setFillColor(CGColor(red: 2.0 / 255, green: 2.0 / 255, blue: 2.0 / 255, alpha: 1))
             context.fill(CGRect(x: 0, y: 0, width: cameraWidth, height: cameraHeight))
-            drawCenteredText("OpenXWebcam — waiting for camera", in: context)
+            if let logo = splashLogo {
+                context.draw(logo, in: CGRect(x: (cameraWidth - logo.width) / 2,
+                                              y: (cameraHeight - logo.height) / 2,
+                                              width: logo.width, height: logo.height))
+            }
         }
         CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
 
@@ -202,18 +206,12 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
         }
     }
 
-    private func drawCenteredText(_ text: String, in context: CGContext) {
-        let font = CTFontCreateWithName("Helvetica" as CFString, 36, nil)
-        let attributes: [NSAttributedString.Key: Any] = [
-            NSAttributedString.Key(kCTFontAttributeName as String): font,
-            NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1),
-        ]
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
-        let bounds = CTLineGetBoundsWithOptions(line, [])
-        context.textPosition = CGPoint(x: (CGFloat(cameraWidth) - bounds.width) / 2,
-                                       y: (CGFloat(cameraHeight) - bounds.height) / 2)
-        CTLineDraw(line, context)
-    }
+    private let splashLogo: CGImage? = {
+        guard let url = Bundle.main.url(forResource: "splash", withExtension: "png"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil)
+        else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }()
 }
 
 final class SourceStreamSource: NSObject, CMIOExtensionStreamSource {
