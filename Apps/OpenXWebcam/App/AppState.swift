@@ -104,6 +104,25 @@ final class AppState: ObservableObject {
         streamer.stop()
     }
 
+    func openExtensionApproval() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+    }
+
+    var statusText: String {
+        switch streamerState {
+        case .idle: return "Not streaming"
+        case .waitingForCamera: return "Waiting for camera…"
+        case .connecting: return "Connecting to camera…"
+        case .streaming(let model, _): return model
+        case .failed(let message): return message
+        }
+    }
+
+    var fps: Double {
+        if case .streaming(_, let fps) = streamerState { return fps }
+        return 0
+    }
+
     var statusLine: String {
         switch streamerState {
         case .idle: return "Not streaming"
