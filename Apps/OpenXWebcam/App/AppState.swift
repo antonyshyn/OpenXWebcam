@@ -7,7 +7,7 @@ import CameraEngine
 final class AppState: ObservableObject {
     @Published var extensionStatus: ExtensionInstaller.Status = .unknown
     @Published var streamerState: CameraStreamer.State = .idle
-    @Published var cameraConnected = false
+    @Published var connectedCameraName: String?
     @Published var launchAtLogin: Bool {
         didSet {
             do {
@@ -74,9 +74,9 @@ final class AppState: ObservableObject {
             self?.previewImage = image
         }
         streamer.setOrientation(mirrored: mirrored, rotation: rotation)
-        presence.onChange = { [weak self] connected in
+        presence.onChange = { [weak self] name in
             DispatchQueue.main.async {
-                self?.cameraConnected = connected
+                self?.connectedCameraName = name
             }
         }
         presence.start()
@@ -137,12 +137,12 @@ final class AppState: ObservableObject {
 
     var menuBarIcon: String {
         if case .streaming = streamerState { return "video.fill" }
-        return cameraConnected ? "video" : "video.slash"
+        return connectedCameraName != nil ? "video" : "video.slash"
     }
 
     var statusText: String {
         switch streamerState {
-        case .idle: return cameraConnected ? "Camera ready" : "No camera"
+        case .idle: return connectedCameraName.map { "\($0) ready" } ?? "No camera"
         case .waitingForCamera: return "Waiting for camera…"
         case .connecting: return "Connecting to camera…"
         case .streaming(let model, _): return model

@@ -111,7 +111,7 @@ struct MenuView: View {
 
     private var statusColor: Color {
         switch state.streamerState {
-        case .idle: return state.cameraConnected ? .blue : .gray
+        case .idle: return state.connectedCameraName != nil ? .blue : .gray
         case .waitingForCamera, .connecting: return .orange
         case .streaming: return .green
         case .failed: return .red
