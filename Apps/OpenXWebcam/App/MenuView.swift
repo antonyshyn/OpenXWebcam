@@ -24,6 +24,19 @@ struct MenuView: View {
                     Text("Fine — sharper image").tag(FujiLiveViewQuality.fine)
                 }
             }
+            settingRow("Rotation") {
+                Picker("Rotation", selection: $state.rotation) {
+                    Text("Off").tag(0)
+                    Text("90°").tag(90)
+                    Text("180°").tag(180)
+                    Text("270°").tag(270)
+                }
+            }
+            settingRow("Mirror") {
+                Toggle("Mirror", isOn: $state.mirrored)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
             ForEach(state.configurableProperties) { property in
                 settingRow(property.name) {
                     Picker(property.name, selection: Binding(
@@ -54,9 +67,10 @@ struct MenuView: View {
                     .aspectRatio(contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
-                Image(systemName: "video.slash")
-                    .font(.title)
-                    .foregroundStyle(.secondary)
+                Image("Logo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 96)
             }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -90,7 +104,7 @@ struct MenuView: View {
 
     private var statusColor: Color {
         switch state.streamerState {
-        case .idle: return .gray
+        case .idle: return state.cameraConnected ? .blue : .gray
         case .waitingForCamera, .connecting: return .orange
         case .streaming: return .green
         case .failed: return .red
@@ -156,7 +170,9 @@ struct MenuView: View {
     private var footer: some View {
         HStack {
             Menu {
+                Toggle("Launch at Login", isOn: $state.launchAtLogin)
                 Toggle("Show Preview", isOn: $state.showPreview)
+                Divider()
                 Button("Copy Diagnostics") { state.copyDiagnostics() }
                 Button("Reinstall Camera Extension") { state.installExtension() }
             } label: {

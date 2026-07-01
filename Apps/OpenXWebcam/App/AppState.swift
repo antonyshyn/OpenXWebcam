@@ -1,11 +1,38 @@
 import AppKit
 import Combine
+import ServiceManagement
 import CameraEngine
 
 @MainActor
 final class AppState: ObservableObject {
     @Published var extensionStatus: ExtensionInstaller.Status = .unknown
     @Published var streamerState: CameraStreamer.State = .idle
+    @Published var cameraConnected = false
+    @Published var launchAtLogin: Bool {
+        didSet {
+            do {
+                if launchAtLogin {
+                    try SMAppService.mainApp.register()
+                } else {
+                    try SMAppService.mainApp.unregister()
+                }
+            } catch {
+                EngineLog.add("launch at login: \(error.localizedDescription)")
+            }
+        }
+    }
+    @Published var mirrored: Bool {
+        didSet {
+            UserDefaults.standard.set(mirrored, forKey: "mirrored")
+            streamer.setOrientation(mirrored: mirrored, rotation: rotation)
+        }
+    }
+    @Published var rotation: Int {
+        didSet {
+            UserDefaults.standard.set(rotation, forKey: "rotation")
+            streamer.setOrientation(mirrored: mirrored, rotation: rotation)
+        }
+    }
     @Published var liveViewSize: FujiLiveViewSize {
         didSet {
             UserDefaults.standard.set(Int(liveViewSize.rawValue), forKey: "liveViewSize")
@@ -32,11 +59,15 @@ final class AppState: ObservableObject {
 
     private let installer = ExtensionInstaller()
     private let streamer = CameraStreamer()
+    private let presence = CameraPresence()
 
     init() {
         showPreview = UserDefaults.standard.object(forKey: "showPreview") as? Bool ?? true
         liveViewSize = FujiLiveViewSize(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewSize"))) ?? .xga
         liveViewQuality = FujiLiveViewQuality(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewQuality"))) ?? .normal
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+        mirrored = UserDefaults.standard.bool(forKey: "mirrored")
+        rotation = UserDefaults.standard.integer(forKey: "rotation")
         installer.onStatusChange = { [weak self] status in
             self?.extensionStatus = status
         }
@@ -53,6 +84,13 @@ final class AppState: ObservableObject {
             self?.previewImage = image
         }
         streamer.setPreviewEnabled(showPreview)
+        streamer.setOrientation(mirrored: mirrored, rotation: rotation)
+        presence.onChange = { [weak self] connected in
+            DispatchQueue.main.async {
+                self?.cameraConnected = connected
+            }
+        }
+        presence.start()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
                                                object: nil, queue: .main) { [streamer] _ in
             streamer.stopAndWait(timeout: 2)
@@ -108,9 +146,14 @@ final class AppState: ObservableObject {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
     }
 
+    var menuBarIcon: String {
+        if case .streaming = streamerState { return "video.fill" }
+        return cameraConnected ? "video" : "video.slash"
+    }
+
     var statusText: String {
         switch streamerState {
-        case .idle: return "Not streaming"
+        case .idle: return cameraConnected ? "Camera ready" : "No camera"
         case .waitingForCamera: return "Waiting for camera…"
         case .connecting: return "Connecting to camera…"
         case .streaming(let model, _): return model

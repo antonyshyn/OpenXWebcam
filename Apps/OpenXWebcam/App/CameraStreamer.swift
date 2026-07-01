@@ -21,6 +21,7 @@ final class CameraStreamer {
     private let manager = CameraManager()
     private let sink = VirtualCameraSink()
     private let previewEnabled = OSAllocatedUnfairLock(initialState: false)
+    private let orientation = OSAllocatedUnfairLock(initialState: (mirrored: false, rotation: 0))
     private let previewInterval: TimeInterval = 1.0 / 15
     private var lastPreviewAt = Date.distantPast
     private var formatDescription: CMFormatDescription?
@@ -56,6 +57,10 @@ final class CameraStreamer {
 
     func setPreviewEnabled(_ enabled: Bool) {
         previewEnabled.withLock { $0 = enabled }
+    }
+
+    func setOrientation(mirrored: Bool, rotation: Int) {
+        orientation.withLock { $0 = (mirrored, rotation) }
     }
 
     func start(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
@@ -117,7 +122,7 @@ final class CameraStreamer {
             }
             return
         }
-        let image = cropLetterbox(decoded)
+        let image = orient(cropLetterbox(decoded))
 
         if let sampleBuffer = makeSampleBuffer(image: image) {
             if sink.enqueue(sampleBuffer) {
@@ -144,9 +149,34 @@ final class CameraStreamer {
         }
     }
 
+    private func orient(_ image: CGImage) -> CGImage {
+        let (mirrored, rotation) = orientation.withLock { $0 }
+        guard mirrored || rotation != 0 else { return image }
+        let swapped = rotation == 90 || rotation == 270
+        let width = swapped ? image.height : image.width
+        let height = swapped ? image.width : image.height
+        guard let context = CGContext(data: nil,
+                                      width: width, height: height,
+                                      bitsPerComponent: 8,
+                                      bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
+        else { return image }
+        context.translateBy(x: CGFloat(width) / 2, y: CGFloat(height) / 2)
+        if mirrored {
+            context.scaleBy(x: -1, y: 1)
+        }
+        context.rotate(by: -CGFloat(rotation) * .pi / 180)
+        context.draw(image, in: CGRect(x: -CGFloat(image.width) / 2,
+                                       y: -CGFloat(image.height) / 2,
+                                       width: CGFloat(image.width),
+                                       height: CGFloat(image.height)))
+        return context.makeImage() ?? image
+    }
+
     private func cropLetterbox(_ image: CGImage) -> CGImage {
         guard image.height * 4 == image.width * 3 else { return image }
-        let contentHeight = image.width * 2 / 3
+        let contentHeight = (image.width * 2 / 3) & ~1
         let bar = (image.height - contentHeight) / 2
         let content = CGRect(x: 0, y: bar, width: image.width, height: contentHeight)
         return image.cropping(to: content) ?? image
