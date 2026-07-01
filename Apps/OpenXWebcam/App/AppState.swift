@@ -51,6 +51,7 @@ final class AppState: ObservableObject {
     private let installer = ExtensionInstaller()
     private let streamer = CameraStreamer()
     private let presence = CameraPresence()
+    private var connectedProductID: UInt16?
 
     init() {
         liveViewSize = FujiLiveViewSize(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewSize"))) ?? .xga
@@ -63,7 +64,9 @@ final class AppState: ObservableObject {
         }
         streamer.onStateChange = { [weak self] state in
             self?.streamerState = state
-            if case .streaming = state {} else {
+            if case .streaming(let model, _) = state {
+                self?.rememberCameraName(model)
+            } else {
                 self?.previewImage = nil
             }
         }
@@ -74,9 +77,12 @@ final class AppState: ObservableObject {
             self?.previewImage = image
         }
         streamer.setOrientation(mirrored: mirrored, rotation: rotation)
-        presence.onChange = { [weak self] name in
+        presence.onChange = { [weak self] productID in
             DispatchQueue.main.async {
-                self?.connectedCameraName = name
+                self?.connectedProductID = productID
+                self?.connectedCameraName = productID.map {
+                    UserDefaults.standard.string(forKey: Self.cameraNameKey($0)) ?? "Camera"
+                }
             }
         }
         presence.start()
@@ -100,6 +106,16 @@ final class AppState: ObservableObject {
 
     func set(_ property: CameraProperty, to value: PTPPropValue) {
         streamer.set(property: property, to: value)
+    }
+
+    private static func cameraNameKey(_ productID: UInt16) -> String {
+        String(format: "cameraName.%04X", productID)
+    }
+
+    private func rememberCameraName(_ model: String) {
+        guard let productID = connectedProductID, connectedCameraName != model else { return }
+        UserDefaults.standard.set(model, forKey: Self.cameraNameKey(productID))
+        connectedCameraName = model
     }
 
     func copyDiagnostics() {

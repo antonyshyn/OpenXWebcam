@@ -18,17 +18,13 @@ static NSError *usbError(NSString *what, IOReturn code) {
     io_service_t _service;
 }
 
-- (instancetype)initWithService:(io_service_t)service
-                       vendorID:(uint16_t)vid
-                      productID:(uint16_t)pid
-                    productName:(nullable NSString *)name {
+- (instancetype)initWithService:(io_service_t)service vendorID:(uint16_t)vid productID:(uint16_t)pid {
     self = [super init];
     if (self) {
         _service = service;
         IOObjectRetain(_service);
         _vendorID = vid;
         _productID = pid;
-        _productName = [name copy];
     }
     return self;
 }
@@ -40,18 +36,15 @@ static NSError *usbError(NSString *what, IOReturn code) {
 + (nullable instancetype)infoForService:(io_service_t)service {
     if (!service) return nil;
     uint16_t vid = 0, pid = 0;
-    NSString *name = nil;
     io_service_t dev = IO_OBJECT_NULL;
     if (IORegistryEntryGetParentEntry(service, kIOServicePlane, &dev) == KERN_SUCCESS) {
         CFTypeRef v = IORegistryEntryCreateCFProperty(dev, CFSTR("idVendor"), kCFAllocatorDefault, 0);
         CFTypeRef p = IORegistryEntryCreateCFProperty(dev, CFSTR("idProduct"), kCFAllocatorDefault, 0);
-        CFTypeRef n = IORegistryEntryCreateCFProperty(dev, CFSTR("USB Product Name"), kCFAllocatorDefault, 0);
         if (v) { vid = [(__bridge NSNumber *)v unsignedShortValue]; CFRelease(v); }
         if (p) { pid = [(__bridge NSNumber *)p unsignedShortValue]; CFRelease(p); }
-        if (n) { name = [(__bridge NSString *)n copy]; CFRelease(n); }
         IOObjectRelease(dev);
     }
-    return [[self alloc] initWithService:service vendorID:vid productID:pid productName:name];
+    return [[self alloc] initWithService:service vendorID:vid productID:pid];
 }
 
 - (void)dealloc {

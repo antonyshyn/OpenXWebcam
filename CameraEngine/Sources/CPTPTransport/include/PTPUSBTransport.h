@@ -8,7 +8,6 @@ extern NSErrorDomain const PTPUSBErrorDomain;
 @interface PTPUSBInterfaceInfo : NSObject
 @property (nonatomic, readonly) uint16_t vendorID;
 @property (nonatomic, readonly) uint16_t productID;
-@property (nonatomic, readonly, nullable) NSString *productName;
 @property (nonatomic, readonly) io_service_t service;
 + (nullable instancetype)infoForService:(io_service_t)service;
 @end
