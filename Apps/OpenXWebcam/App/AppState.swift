@@ -47,22 +47,12 @@ final class AppState: ObservableObject {
     }
     @Published var cameraProperties: [CameraProperty] = []
     @Published var previewImage: CGImage?
-    @Published var showPreview: Bool {
-        didSet {
-            UserDefaults.standard.set(showPreview, forKey: "showPreview")
-            streamer.setPreviewEnabled(showPreview)
-            if !showPreview {
-                previewImage = nil
-            }
-        }
-    }
 
     private let installer = ExtensionInstaller()
     private let streamer = CameraStreamer()
     private let presence = CameraPresence()
 
     init() {
-        showPreview = UserDefaults.standard.object(forKey: "showPreview") as? Bool ?? true
         liveViewSize = FujiLiveViewSize(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewSize"))) ?? .xga
         liveViewQuality = FujiLiveViewQuality(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewQuality"))) ?? .normal
         launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -83,7 +73,6 @@ final class AppState: ObservableObject {
         streamer.onPreviewFrame = { [weak self] image in
             self?.previewImage = image
         }
-        streamer.setPreviewEnabled(showPreview)
         streamer.setOrientation(mirrored: mirrored, rotation: rotation)
         presence.onChange = { [weak self] connected in
             DispatchQueue.main.async {

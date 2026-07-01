@@ -20,7 +20,6 @@ final class CameraStreamer {
 
     private let manager = CameraManager()
     private let sink = VirtualCameraSink()
-    private let previewEnabled = OSAllocatedUnfairLock(initialState: false)
     private let orientation = OSAllocatedUnfairLock(initialState: (mirrored: false, rotation: 0))
     private let previewInterval: TimeInterval = 1.0 / 15
     private var lastPreviewAt = Date.distantPast
@@ -53,10 +52,6 @@ final class CameraStreamer {
 
     func set(property: CameraProperty, to value: PTPPropValue) {
         manager.set(property: property, to: value)
-    }
-
-    func setPreviewEnabled(_ enabled: Bool) {
-        previewEnabled.withLock { $0 = enabled }
     }
 
     func setOrientation(mirrored: Bool, rotation: Int) {
@@ -140,8 +135,7 @@ final class CameraStreamer {
             }
         }
 
-        let wantsPreview = previewEnabled.withLock { $0 }
-        if wantsPreview && -lastPreviewAt.timeIntervalSinceNow >= previewInterval {
+        if -lastPreviewAt.timeIntervalSinceNow >= previewInterval {
             lastPreviewAt = Date()
             DispatchQueue.main.async { [onPreviewFrame] in
                 onPreviewFrame?(image)

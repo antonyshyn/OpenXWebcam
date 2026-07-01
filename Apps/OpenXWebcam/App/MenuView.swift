@@ -6,9 +6,7 @@ struct MenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if state.showPreview {
-                preview
-            }
+            preview
             header
             extensionBanner
             settingRow("Resolution") {
@@ -23,19 +21,6 @@ struct MenuView: View {
                     Text("Smooth — higher fps").tag(FujiLiveViewQuality.normal)
                     Text("Fine — sharper image").tag(FujiLiveViewQuality.fine)
                 }
-            }
-            settingRow("Rotation") {
-                Picker("Rotation", selection: $state.rotation) {
-                    Text("Off").tag(0)
-                    Text("90°").tag(90)
-                    Text("180°").tag(180)
-                    Text("270°").tag(270)
-                }
-            }
-            settingRow("Mirror") {
-                Toggle("Mirror", isOn: $state.mirrored)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
             }
             ForEach(state.configurableProperties) { property in
                 settingRow(property.name) {
@@ -83,7 +68,29 @@ struct MenuView: View {
                     .padding(6)
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            HStack(spacing: 6) {
+                previewButton("rotate.right", active: state.rotation != 0) {
+                    state.rotation = (state.rotation + 90) % 360
+                }
+                previewButton("arrow.left.and.right.righttriangle.left.righttriangle.right", active: state.mirrored) {
+                    state.mirrored.toggle()
+                }
+            }
+            .padding(6)
+        }
         .frame(width: 276, height: 184)
+    }
+
+    private func previewButton(_ symbol: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.caption)
+                .foregroundStyle(active ? Color.accentColor : .white)
+                .frame(width: 22, height: 22)
+                .background(.ultraThinMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var header: some View {
@@ -171,7 +178,6 @@ struct MenuView: View {
         HStack {
             Menu {
                 Toggle("Launch at Login", isOn: $state.launchAtLogin)
-                Toggle("Show Preview", isOn: $state.showPreview)
                 Divider()
                 Button("Copy Diagnostics") { state.copyDiagnostics() }
                 Button("Reinstall Camera Extension") { state.installExtension() }
