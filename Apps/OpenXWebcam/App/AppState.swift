@@ -3,6 +3,19 @@ import Combine
 import ServiceManagement
 import CameraEngine
 
+enum OutputAspect: String, CaseIterable {
+    case native, wide, classic, square
+
+    var ratio: Double? {
+        switch self {
+        case .native: return nil
+        case .wide: return 16.0 / 9
+        case .classic: return 4.0 / 3
+        case .square: return 1
+        }
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var extensionStatus: ExtensionInstaller.Status = .unknown
@@ -33,6 +46,30 @@ final class AppState: ObservableObject {
             streamer.setOrientation(mirrored: mirrored, rotation: rotation)
         }
     }
+    @Published var aspect: OutputAspect {
+        didSet {
+            UserDefaults.standard.set(aspect.rawValue, forKey: "aspect")
+            applyFraming()
+        }
+    }
+    @Published var zoom: Double {
+        didSet {
+            UserDefaults.standard.set(zoom, forKey: "zoom")
+            applyFraming()
+        }
+    }
+    @Published var panX: Double {
+        didSet {
+            UserDefaults.standard.set(panX, forKey: "panX")
+            applyFraming()
+        }
+    }
+    @Published var panY: Double {
+        didSet {
+            UserDefaults.standard.set(panY, forKey: "panY")
+            applyFraming()
+        }
+    }
     @Published var liveViewSize: FujiLiveViewSize {
         didSet {
             UserDefaults.standard.set(Int(liveViewSize.rawValue), forKey: "liveViewSize")
@@ -59,6 +96,10 @@ final class AppState: ObservableObject {
         launchAtLogin = SMAppService.mainApp.status == .enabled
         mirrored = UserDefaults.standard.bool(forKey: "mirrored")
         rotation = UserDefaults.standard.integer(forKey: "rotation")
+        aspect = UserDefaults.standard.string(forKey: "aspect").flatMap(OutputAspect.init) ?? .native
+        zoom = min(max(UserDefaults.standard.double(forKey: "zoom"), 1), 2)
+        panX = min(max(UserDefaults.standard.double(forKey: "panX"), -1), 1)
+        panY = min(max(UserDefaults.standard.double(forKey: "panY"), -1), 1)
         installer.onStatusChange = { [weak self] status in
             self?.extensionStatus = status
         }
@@ -77,6 +118,7 @@ final class AppState: ObservableObject {
             self?.previewImage = image
         }
         streamer.setOrientation(mirrored: mirrored, rotation: rotation)
+        applyFraming()
         presence.onChange = { [weak self] productID in
             DispatchQueue.main.async {
                 self?.connectedProductID = productID
@@ -106,6 +148,15 @@ final class AppState: ObservableObject {
 
     func set(_ property: CameraProperty, to value: PTPPropValue) {
         streamer.set(property: property, to: value)
+    }
+
+    func pan(dx: Double, dy: Double) {
+        panX = min(max(panX - dx * 2, -1), 1)
+        panY = min(max(panY - dy * 2, -1), 1)
+    }
+
+    private func applyFraming() {
+        streamer.setFraming(aspect: aspect.ratio, zoom: zoom, panX: panX, panY: panY)
     }
 
     private static func cameraNameKey(_ productID: UInt16) -> String {

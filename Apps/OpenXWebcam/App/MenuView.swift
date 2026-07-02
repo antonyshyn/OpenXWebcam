@@ -3,12 +3,28 @@ import CameraEngine
 
 struct MenuView: View {
     @ObservedObject var state: AppState
+    @State private var dragTranslation = CGSize.zero
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             preview
             header
             extensionBanner
+            settingRow("Aspect ratio") {
+                Picker("Aspect ratio", selection: $state.aspect) {
+                    Text("3:2").tag(OutputAspect.native)
+                    Text("16:9").tag(OutputAspect.wide)
+                    Text("4:3").tag(OutputAspect.classic)
+                    Text("1:1").tag(OutputAspect.square)
+                }
+            }
+            HStack {
+                Text("Zoom")
+                Slider(value: $state.zoom, in: 1...2)
+                Text(String(format: "%.1f×", state.zoom))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
             settingRow("Resolution") {
                 Picker("Resolution", selection: $state.liveViewSize) {
                     Text("1024×768").tag(FujiLiveViewSize.xga)
@@ -80,6 +96,13 @@ struct MenuView: View {
             .padding(6)
         }
         .frame(width: 276, height: 184)
+        .gesture(DragGesture()
+            .onChanged { value in
+                state.pan(dx: Double(value.translation.width - dragTranslation.width) / 276,
+                          dy: Double(value.translation.height - dragTranslation.height) / 184)
+                dragTranslation = value.translation
+            }
+            .onEnded { _ in dragTranslation = .zero })
     }
 
     private func previewButton(_ symbol: String, active: Bool, action: @escaping () -> Void) -> some View {
