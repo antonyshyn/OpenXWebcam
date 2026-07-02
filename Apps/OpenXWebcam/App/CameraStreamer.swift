@@ -21,7 +21,7 @@ final class CameraStreamer {
     private let manager = CameraManager()
     private let sink = VirtualCameraSink()
     private let orientation = OSAllocatedUnfairLock(initialState: (mirrored: false, rotation: 0))
-    private let framing = OSAllocatedUnfairLock(initialState: (aspect: Double?.none, zoom: 1.0, panX: 0.0, panY: 0.0))
+    private let framing = OSAllocatedUnfairLock(initialState: (zoom: 1.0, panX: 0.0, panY: 0.0))
     private let previewInterval: TimeInterval = 1.0 / 15
     private var lastPreviewAt = Date.distantPast
     private var formatDescription: CMFormatDescription?
@@ -59,8 +59,8 @@ final class CameraStreamer {
         orientation.withLock { $0 = (mirrored, rotation) }
     }
 
-    func setFraming(aspect: Double?, zoom: Double, panX: Double, panY: Double) {
-        framing.withLock { $0 = (aspect, zoom, panX, panY) }
+    func setFraming(zoom: Double, panX: Double, panY: Double) {
+        framing.withLock { $0 = (zoom, panX, panY) }
     }
 
     func start(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
@@ -174,11 +174,9 @@ final class CameraStreamer {
     }
 
     private func frame(_ image: CGImage) -> CGImage {
-        let (aspect, zoom, panX, panY) = framing.withLock { $0 }
-        let ratio = aspect ?? Double(image.width) / Double(image.height)
-        let fitWidth = min(Double(image.width), Double(image.height) * ratio)
-        let cropWidth = Int(fitWidth / zoom) & ~1
-        let cropHeight = Int(fitWidth / ratio / zoom) & ~1
+        let (zoom, panX, panY) = framing.withLock { $0 }
+        let cropWidth = Int(Double(image.width) / zoom) & ~1
+        let cropHeight = Int(Double(image.height) / zoom) & ~1
         guard cropWidth < image.width || cropHeight < image.height else { return image }
         let x = Double(image.width - cropWidth) / 2 * (1 + panX)
         let y = Double(image.height - cropHeight) / 2 * (1 + panY)

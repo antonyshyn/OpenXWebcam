@@ -3,19 +3,6 @@ import Combine
 import ServiceManagement
 import CameraEngine
 
-enum OutputAspect: String, CaseIterable {
-    case native, wide, classic, square
-
-    var ratio: Double? {
-        switch self {
-        case .native: return nil
-        case .wide: return 16.0 / 9
-        case .classic: return 4.0 / 3
-        case .square: return 1
-        }
-    }
-}
-
 @MainActor
 final class AppState: ObservableObject {
     @Published var extensionStatus: ExtensionInstaller.Status = .unknown
@@ -44,12 +31,6 @@ final class AppState: ObservableObject {
         didSet {
             UserDefaults.standard.set(rotation, forKey: "rotation")
             streamer.setOrientation(mirrored: mirrored, rotation: rotation)
-        }
-    }
-    @Published var aspect: OutputAspect {
-        didSet {
-            UserDefaults.standard.set(aspect.rawValue, forKey: "aspect")
-            applyFraming()
         }
     }
     @Published var zoom: Double {
@@ -96,7 +77,6 @@ final class AppState: ObservableObject {
         launchAtLogin = SMAppService.mainApp.status == .enabled
         mirrored = UserDefaults.standard.bool(forKey: "mirrored")
         rotation = UserDefaults.standard.integer(forKey: "rotation")
-        aspect = UserDefaults.standard.string(forKey: "aspect").flatMap(OutputAspect.init) ?? .native
         zoom = min(max(UserDefaults.standard.double(forKey: "zoom"), 1), 2)
         panX = min(max(UserDefaults.standard.double(forKey: "panX"), -1), 1)
         panY = min(max(UserDefaults.standard.double(forKey: "panY"), -1), 1)
@@ -156,7 +136,7 @@ final class AppState: ObservableObject {
     }
 
     private func applyFraming() {
-        streamer.setFraming(aspect: aspect.ratio, zoom: zoom, panX: panX, panY: panY)
+        streamer.setFraming(zoom: zoom, panX: panX, panY: panY)
     }
 
     private static func cameraNameKey(_ productID: UInt16) -> String {

@@ -10,14 +10,6 @@ struct MenuView: View {
             preview
             header
             extensionBanner
-            settingRow("Aspect ratio") {
-                Picker("Aspect ratio", selection: $state.aspect) {
-                    Text("3:2").tag(OutputAspect.native)
-                    Text("16:9").tag(OutputAspect.wide)
-                    Text("4:3").tag(OutputAspect.classic)
-                    Text("1:1").tag(OutputAspect.square)
-                }
-            }
             HStack {
                 Text("Zoom")
                 Slider(value: $state.zoom, in: 1...2)
