@@ -5,15 +5,6 @@ DerivedData/
 *.o
 *.swiftmodule
 
-# Spike capture output
-spike/frames/
-spike/*.log
-spike-rawusb/frames/
-spike-rawusb/*.log
-
-# Working notes
-docs/*-HANDOFF.md
-
 # macOS
 .DS_Store
 
