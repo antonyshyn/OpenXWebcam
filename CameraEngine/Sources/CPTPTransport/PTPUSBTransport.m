@@ -208,6 +208,11 @@ static void *queryPlugin(io_service_t svc, CFUUIDRef pluginType, CFUUIDBytes iid
         return NO;
     }
     IOReturn kr = (*_iface)->WritePipeTO(_iface, _pipeOut, (void *)data.bytes, (UInt32)data.length, 0, 5000);
+    if (kr == kIOUSBPipeStalled) {
+        // Only clear a halt the camera actually reported - clearing one on a healthy
+        // endpoint resets its data toggle, which fragile firmware doesn't forgive.
+        (*_iface)->ClearPipeStallBothEnds(_iface, _pipeOut);
+    }
     if (kr != kIOReturnSuccess) {
         if (error) *error = usbError(@"WritePipe", kr);
         return NO;
@@ -222,11 +227,18 @@ static void *queryPlugin(io_service_t svc, CFUUIDRef pluginType, CFUUIDBytes iid
     }
     UInt32 size = (UInt32)_readBuffer.length;
     IOReturn kr = (*_iface)->ReadPipeTO(_iface, _pipeIn, _readBuffer.mutableBytes, &size, 0, (UInt32)(timeout * 1000));
+    if (kr == kIOUSBPipeStalled) {
+        (*_iface)->ClearPipeStallBothEnds(_iface, _pipeIn);
+    }
     if (kr != kIOReturnSuccess) {
         if (error) *error = usbError(@"ReadPipe", kr);
         return nil;
     }
-    return [_readBuffer subdataWithRange:NSMakeRange(0, size)];
+    // Copy just the bytes read. A subdata of the 8 MB buffer can share its storage,
+    // and the next read writing into the buffer then forces a fresh 8 MB copy while
+    // the old one stays alive with the returned object - about 5 MB leaked per read,
+    // which took the app past 3 GB in under half a minute.
+    return [NSData dataWithBytes:_readBuffer.bytes length:size];
 }
 
 @end

@@ -5,6 +5,7 @@ import CameraEngine
 
 @MainActor
 final class AppState: ObservableObject {
+    private var signalSources: [DispatchSourceSignal] = []
     @Published var extensionStatus: ExtensionInstaller.Status = .unknown
     @Published var streamerState: CameraStreamer.State = .idle
     @Published var connectedCameraName: String?
@@ -64,6 +65,22 @@ final class AppState: ObservableObject {
         }
     }
     @Published var cameraProperties: [CameraProperty] = []
+    @Published var releaseState: ReleaseState = .idle
+    @Published var focusState: FocusState = .idle
+    @Published var exposureLocked = false
+    @Published var batteryLevel: Int?
+
+    enum FocusState: Equatable {
+        case idle
+        case focusing
+        case done(Bool)
+    }
+
+    enum ReleaseState: Equatable {
+        case idle
+        case working
+        case done(Bool)
+    }
     @Published var previewImage: CGImage?
 
     private let installer = ExtensionInstaller()
@@ -89,6 +106,7 @@ final class AppState: ObservableObject {
                 self?.rememberCameraName(model)
             } else {
                 self?.previewImage = nil
+                self?.batteryLevel = nil
             }
         }
         streamer.onPropertiesChange = { [weak self] properties in
@@ -96,6 +114,20 @@ final class AppState: ObservableObject {
         }
         streamer.onPreviewFrame = { [weak self] image in
             self?.previewImage = image
+        }
+        streamer.onBattery = { [weak self] level in
+            self?.batteryLevel = level
+        }
+        streamer.onExposureLockChanged = { [weak self] locked in
+            self?.exposureLocked = locked
+        }
+        streamer.onAutofocusResult = { [weak self] locked in
+            guard let self else { return }
+            self.focusState = .done(locked)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self, case .done = self.focusState else { return }
+                self.focusState = .idle
+            }
         }
         streamer.setOrientation(mirrored: mirrored, rotation: rotation)
         applyFraming()
@@ -110,7 +142,19 @@ final class AppState: ObservableObject {
         presence.start()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
                                                object: nil, queue: .main) { [streamer] _ in
-            streamer.stopAndWait(timeout: 2)
+            // The stream thread can be inside a read of up to five seconds. Exiting
+            // before it finishes aborts that transfer, and an aborted transfer is
+            // what hangs the X-T3's USB firmware until its battery is pulled.
+            streamer.stopAndWait(timeout: 6)
+        }
+        // A termination signal (logout, a script, `kill`) would otherwise end the
+        // process on the spot, mid-transfer. Route it through the normal quit path.
+        for sig in [SIGTERM, SIGINT, SIGHUP] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { NSApplication.shared.terminate(nil) }
+            source.resume()
+            signalSources.append(source)
         }
         DispatchQueue.main.async { [installer] in
             installer.install()
@@ -171,6 +215,30 @@ final class AppState: ObservableObject {
     func startStreaming() {
         UserDefaults.standard.set(true, forKey: "autoStart")
         streamer.start(size: liveViewSize, quality: liveViewQuality)
+    }
+
+    func toggleExposureLock() {
+        guard isStreaming else { return }
+        streamer.setAutoExposureLock(!exposureLocked)
+    }
+
+    func triggerAutofocus() {
+        guard isStreaming else { return }
+        focusState = .focusing
+        streamer.triggerAutofocus()
+    }
+
+    func releaseCamera() {
+        UserDefaults.standard.set(false, forKey: "autoStart")
+        releaseState = .working
+        streamer.releaseCamera { [weak self] restored in
+            guard let self else { return }
+            self.releaseState = .done(restored)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                guard let self, case .done = self.releaseState else { return }
+                self.releaseState = .idle
+            }
+        }
     }
 
     func stopStreaming() {

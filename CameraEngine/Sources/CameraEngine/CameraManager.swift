@@ -19,6 +19,13 @@ public final class CameraManager {
     public var onFrame: ((Data) -> Void)?
     public var onFPS: ((Double) -> Void)?
     public var onProperties: (([CameraProperty]) -> Void)?
+    /// Reports whether a requested autofocus locked. Called on the main queue.
+    public var onAutofocusResult: ((Bool) -> Void)?
+    /// Reports the auto exposure lock state after a change. Called on the main queue.
+    public var onExposureLockChanged: ((Bool) -> Void)?
+    /// Reports the body battery in percent, on connect and then every 30 seconds.
+    /// Called on the main queue.
+    public var onBattery: ((Int) -> Void)?
 
     public private(set) var liveViewSize: FujiLiveViewSize
     public private(set) var liveViewQuality: FujiLiveViewQuality
@@ -34,6 +41,16 @@ public final class CameraManager {
     private let stopStreamFlag = OSAllocatedUnfairLock(initialState: false)
     private let latestDeviceInfo = OSAllocatedUnfairLock<PTPDeviceInfo?>(initialState: nil)
     private let pendingWrites = OSAllocatedUnfairLock<[PropertyWrite]>(initialState: [])
+    private let autofocusRequested = OSAllocatedUnfairLock(initialState: false)
+    private let exposureLockRequest = OSAllocatedUnfairLock<Bool?>(initialState: nil)
+    /// When the current session started delivering frames.
+    private let streamingSince = OSAllocatedUnfairLock<Date?>(initialState: nil)
+    /// A session that streamed at least this long before failing counts as healthy,
+    /// and refills the retry budget rather than drawing it down.
+    private static let healthySessionDuration: TimeInterval = 30
+    /// How often to read the battery. It changes slowly, and each read is one more
+    /// transaction sharing the session with the frame loop.
+    private static let batteryPollInterval: TimeInterval = 30
 
     private struct PropertyWrite: Sendable {
         let code: UInt16
@@ -71,6 +88,69 @@ public final class CameraManager {
                 self.setState(.stopped)
             }
         }
+    }
+
+    /// Stops live view and hands control back to the camera body.
+    ///
+    /// Live view runs with the camera in USB priority (0xD207 = 2), where the host
+    /// owns the session and the body's own power switch is subordinate to it. A
+    /// clean stop restores camera priority, but a crash or a force quit does not,
+    /// and the camera then stays powered until its battery is pulled. This restores
+    /// it without one. `completion` is called on the main queue.
+    public func releaseCamera(completion: @escaping (Bool) -> Void) {
+        stop()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // The stream thread can be inside a 5 second read when this is pressed.
+            // Taking the camera before it lets go means two connections fighting
+            // over one interface, so wait long enough for it to finish.
+            self?.waitUntilIdle(timeout: 8)
+            let restored = Self.handControlBackToCamera()
+            DispatchQueue.main.async { completion(restored) }
+        }
+    }
+
+    private static func handControlBackToCamera() -> Bool {
+        guard let camera = CameraDiscovery.firstFuji() else {
+            EngineLog.add("release: no camera found")
+            return false
+        }
+        CameraDiscovery.killPtpcamerad()
+        let transport = PTPUSBTransport(service: camera.info.service)
+        do {
+            try transport.openSeizing()
+        } catch {
+            EngineLog.add("release: \(error.localizedDescription)")
+            return false
+        }
+        defer { transport.close() }
+
+        let session = PTPSession(transport: transport)
+        session.clearPipe()
+        guard let rc = try? session.open(), rc == PTPRC.ok else {
+            EngineLog.add("release: camera is not answering - switch it off and on; if its screen stays lit, remove the battery")
+            return false
+        }
+        try? FujiCamera(session: session).stopLiveView()
+        let restored = (try? session.getPropU16(FujiProp.priorityMode))?.value == 1
+        _ = try? session.close()
+        EngineLog.add(restored ? "release: control returned to camera"
+                               : "release: priority mode not restored")
+        return restored
+    }
+
+    /// Queues a one-shot autofocus.
+    ///
+    /// The camera shares one PTP session with the frame loop, so this only sets a
+    /// flag; the stream thread performs the focus between frames. Requesting again
+    /// while one is pending is a no-op rather than a queue, so holding the button
+    /// down cannot flood the camera.
+    public func requestAutofocus() {
+        autofocusRequested.withLock { $0 = true }
+    }
+
+    /// Queues an auto exposure lock change, applied by the stream thread.
+    public func setAutoExposureLock(_ locked: Bool) {
+        exposureLockRequest.withLock { $0 = locked }
     }
 
     public func apply(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
@@ -139,7 +219,9 @@ public final class CameraManager {
     private func streamLoop(info: PTPUSBInterfaceInfo) {
         let size = liveViewSize
         let quality = liveViewQuality
-        var retry = RetryPolicy()
+        // Waits of 1, 2, 4, 4, 4 seconds: a camera that has just been cancelled out of
+        // a stuck transfer needs a moment before it takes new commands.
+        var retry = RetryPolicy(maxAttempts: 5, baseDelay: 1.0, maxDelay: 4.0)
         var lastError: String?
 
         while !streamStopRequested {
@@ -150,6 +232,12 @@ public final class CameraManager {
             } catch {
                 lastError = describe(error)
                 EngineLog.add("stream error: \(lastError ?? "")")
+                // Glitches minutes apart are not a failing camera. Without this, five of
+                // them spread over an afternoon ended the stream for good.
+                if let since = streamingSince.withLock({ $0 }),
+                   -since.timeIntervalSinceNow >= Self.healthySessionDuration {
+                    retry.reset()
+                }
                 guard !streamStopRequested, let delay = retry.nextDelay() else { break }
                 CameraDiscovery.killPtpcamerad()
                 Thread.sleep(forTimeInterval: delay)
@@ -176,12 +264,27 @@ public final class CameraManager {
     }
 
     private func streamOnce(info: PTPUSBInterfaceInfo, size: FujiLiveViewSize, quality: FujiLiveViewQuality) throws {
+        streamingSince.withLock { $0 = nil }
         CameraDiscovery.killPtpcamerad()
         let transport = PTPUSBTransport(service: info.service)
         try transport.openSeizing()
         defer { transport.close() }
 
         let session = PTPSession(transport: transport)
+        // A previous session may have failed with the camera mid-transfer. Get it out
+        // of that before sending anything, or the first command simply times out.
+        session.clearPipe()
+        do {
+            try runSession(session, size: size, quality: quality)
+        } catch {
+            // Empty the pipe while the connection is still open, so nothing the camera
+            // was still sending is cut off by the close.
+            session.clearPipe()
+            throw error
+        }
+    }
+
+    private func runSession(_ session: PTPSession, size: FujiLiveViewSize, quality: FujiLiveViewQuality) throws {
         let rc = try session.open()
         guard rc == PTPRC.ok else {
             throw CameraManagerError.sessionOpenFailed(rc)
@@ -194,18 +297,54 @@ public final class CameraManager {
         try fuji.prepare(size: size, quality: quality)
         try fuji.startLiveView()
         setState(.streaming(model: model))
+        streamingSince.withLock { $0 = Date() }
         lockedProps = []
         publishProperties(from: fuji, advertised: advertised)
 
         var frames = 0
         var windowStart = Date()
+        autofocusRequested.withLock { $0 = false }
+        exposureLockRequest.withLock { $0 = nil }
+        var nextBatteryRead = Date()
+        var lastBattery: Int? = nil
         while !streamStopRequested {
-            applyPendingWrites(to: fuji, advertised: advertised)
-            guard let jpeg = try fuji.nextFrame() else {
+            // This is a bare Thread, so nothing drains its autorelease pool on its own:
+            // every object the transport and the frame consumer autorelease would live
+            // until the thread ends. Drain once per frame instead.
+            let delivered = try autoreleasepool { () throws -> Bool in
+                applyPendingWrites(to: fuji, advertised: advertised)
+                if autofocusRequested.withLock({ pending -> Bool in
+                    defer { pending = false }
+                    return pending
+                }) {
+                    let locked = fuji.triggerAutofocus()
+                    DispatchQueue.main.async { [onAutofocusResult] in onAutofocusResult?(locked) }
+                }
+                if let wanted = exposureLockRequest.withLock({ pending -> Bool? in
+                    defer { pending = nil }
+                    return pending
+                }) {
+                    let locked = fuji.setAutoExposureLock(wanted)
+                    DispatchQueue.main.async { [onExposureLockChanged] in onExposureLockChanged?(locked) }
+                }
+                if Date() >= nextBatteryRead {
+                    nextBatteryRead = Date(timeIntervalSinceNow: Self.batteryPollInterval)
+                    if let level = fuji.batteryLevel() {
+                        if level != lastBattery {
+                            EngineLog.add("battery \(level)%")
+                            lastBattery = level
+                        }
+                        DispatchQueue.main.async { [onBattery] in onBattery?(level) }
+                    }
+                }
+                guard let jpeg = try fuji.nextFrame() else { return false }
+                onFrame?(jpeg)
+                return true
+            }
+            guard delivered else {
                 usleep(5000)
                 continue
             }
-            onFrame?(jpeg)
             frames += 1
             let elapsed = -windowStart.timeIntervalSinceNow
             if elapsed >= 2 {

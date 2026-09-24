@@ -77,6 +77,34 @@ final class CameraStreamer {
         sink.disconnect()
     }
 
+    var onAutofocusResult: ((Bool) -> Void)? {
+        get { manager.onAutofocusResult }
+        set { manager.onAutofocusResult = newValue }
+    }
+
+    func triggerAutofocus() {
+        manager.requestAutofocus()
+    }
+
+    var onBattery: ((Int) -> Void)? {
+        get { manager.onBattery }
+        set { manager.onBattery = newValue }
+    }
+
+    var onExposureLockChanged: ((Bool) -> Void)? {
+        get { manager.onExposureLockChanged }
+        set { manager.onExposureLockChanged = newValue }
+    }
+
+    func setAutoExposureLock(_ locked: Bool) {
+        manager.setAutoExposureLock(locked)
+    }
+
+    func releaseCamera(completion: @escaping (Bool) -> Void) {
+        sink.disconnect()
+        manager.releaseCamera(completion: completion)
+    }
+
     func stopAndWait(timeout: TimeInterval) {
         manager.stop()
         sink.disconnect()

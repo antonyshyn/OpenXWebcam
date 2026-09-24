@@ -39,9 +39,9 @@ Have an unconfirmed body? Try it and open an issue with the output of
 - USB MODE: `X WEBCAM` (MENU → CONNECTION SETTING → USB MODE).
 - Auto Power Off: OFF.
 - Focus: the camera's own AF settings stay in charge while streaming. Set the
-  focus switch to AF-C and turn on Face/Eye detection for hands-free focus;
-  half-pressing the shutter refocuses too. Focus can't be driven over USB in
-  webcam mode — the camera doesn't expose it.
+  focus switch to AF-C for hands-free focus; half-pressing the shutter refocuses
+  too. The menu also has an autofocus button, and face detection is enabled
+  automatically when streaming starts.
 
 ## Troubleshooting
 

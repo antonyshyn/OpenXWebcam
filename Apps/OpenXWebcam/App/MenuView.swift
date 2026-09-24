@@ -10,6 +10,23 @@ struct MenuView: View {
             preview
             header
             extensionBanner
+            releaseBanner
+            HStack {
+                Button {
+                    state.triggerAutofocus()
+                } label: {
+                    Label(focusLabel, systemImage: focusIcon)
+                }
+                .disabled(!state.isStreaming || state.focusState == .focusing)
+                Button {
+                    state.toggleExposureLock()
+                } label: {
+                    Label(state.exposureLocked ? "Exposure Locked" : "Lock Exposure",
+                          systemImage: state.exposureLocked ? "lock.fill" : "lock.open")
+                }
+                .disabled(!state.isStreaming)
+                Spacer()
+            }
             HStack {
                 Text("Zoom")
                 Slider(value: $state.zoom, in: 1...2)
@@ -66,6 +83,33 @@ struct MenuView: View {
                     .frame(height: 96)
             }
         }
+        .overlay(alignment: .topLeading) {
+            if let level = state.batteryLevel {
+                Label {
+                    Text("\(level)%").monospacedDigit()
+                } icon: {
+                    Image(systemName: batterySymbol(level))
+                }
+                .font(.caption2)
+                .foregroundStyle(level <= 15 ? Color.red : Color.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(6)
+                .help("Camera battery")
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if state.exposureLocked {
+                Text("AE-L")
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.yellow.opacity(0.85), in: Capsule())
+                    .foregroundStyle(.black)
+                    .padding(6)
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             if state.fps > 0 {
                 Text(String(format: "%.0f fps", state.fps))
@@ -84,9 +128,20 @@ struct MenuView: View {
                 previewButton("arrow.left.and.right.righttriangle.left.righttriangle.right", active: state.mirrored) {
                     state.mirrored.toggle()
                 }
+                previewButton("viewfinder", active: state.focusState != .idle) {
+                    state.triggerAutofocus()
+                }
+                .disabled(!state.isStreaming)
+                previewButton(state.exposureLocked ? "lock.fill" : "lock.open",
+                              active: state.exposureLocked) {
+                    state.toggleExposureLock()
+                }
+                .disabled(!state.isStreaming)
             }
             .padding(6)
         }
+        .overlay { focusIndicator }
+        .animation(.easeOut(duration: 0.18), value: state.focusState)
         .frame(width: 276, height: 184)
         .gesture(DragGesture()
             .onChanged { value in
@@ -95,6 +150,50 @@ struct MenuView: View {
                 dragTranslation = value.translation
             }
             .onEnded { _ in dragTranslation = .zero })
+    }
+
+    /// Focus feedback drawn over the preview: white while focusing, green on a
+    /// lock, red on a miss. The frame rate is only ~30fps and focus settles in
+    /// about 160ms, so without something this visible a press looks like a no-op.
+    @ViewBuilder
+    private var focusIndicator: some View {
+        switch state.focusState {
+        case .focusing:
+            focusBrackets(.white, label: nil)
+        case .done(true):
+            focusBrackets(.green, label: "AF")
+        case .done(false):
+            focusBrackets(.red, label: "AF")
+        case .idle:
+            EmptyView()
+        }
+    }
+
+    private func focusBrackets(_ color: Color, label: String?) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(color, lineWidth: 2)
+                .frame(width: 104, height: 104)
+                .shadow(color: .black.opacity(0.6), radius: 2)
+            if let label {
+                Text(label)
+                    .font(.caption2.bold())
+                    .foregroundStyle(color)
+                    .shadow(color: .black.opacity(0.7), radius: 2)
+                    .offset(y: 64)
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 1.25)))
+    }
+
+    private func batterySymbol(_ level: Int) -> String {
+        switch level {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default: return "battery.100percent"
+        }
     }
 
     private func previewButton(_ symbol: String, active: Bool, action: @escaping () -> Void) -> some View {
@@ -138,6 +237,47 @@ struct MenuView: View {
             get: { state.isStreaming },
             set: { $0 ? state.startStreaming() : state.stopStreaming() }
         )
+    }
+
+    private var focusLabel: String {
+        switch state.focusState {
+        case .idle: return "Autofocus"
+        case .focusing: return "Focusing…"
+        case .done(true): return "Focus locked"
+        case .done(false): return "Focus missed"
+        }
+    }
+
+    private var focusIcon: String {
+        switch state.focusState {
+        case .done(true): return "viewfinder.circle.fill"
+        case .done(false): return "viewfinder.circle"
+        default: return "viewfinder"
+        }
+    }
+
+    @ViewBuilder
+    private var releaseBanner: some View {
+        switch state.releaseState {
+        case .working:
+            banner {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Handing control back to the camera…")
+            }
+        case .done(true):
+            banner {
+                Text("Camera released — its power switch works again")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .done(false):
+            banner {
+                Text("The camera isn't responding. Switch it off and on — if its screen stays lit, remove the battery.")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .idle:
+            EmptyView()
+        }
     }
 
     @ViewBuilder
@@ -193,6 +333,9 @@ struct MenuView: View {
         HStack {
             Menu {
                 Toggle("Launch at Login", isOn: $state.launchAtLogin)
+                Divider()
+                Button("Release Camera") { state.releaseCamera() }
+                    .disabled(state.releaseState == .working)
                 Divider()
                 Button("Copy Diagnostics") { state.copyDiagnostics() }
                 Button("Reinstall Camera Extension") { state.installExtension() }
