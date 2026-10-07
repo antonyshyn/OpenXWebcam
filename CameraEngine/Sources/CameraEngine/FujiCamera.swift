@@ -47,15 +47,16 @@ public final class FujiCamera {
     }
 
     public func prepare(size: FujiLiveViewSize? = nil, quality: FujiLiveViewQuality? = nil) throws {
+        _ = try? session.command(code: PTPOp.terminateOpenCapture)
         let rc = try setPropRetryingBusy(FujiProp.priorityMode, 2)
         guard rc == PTPRC.ok else {
             throw FujiCameraError.propertyWriteFailed(FujiProp.priorityMode, rc: rc)
         }
         if let size {
-            _ = try setPropRetryingBusy(FujiProp.liveViewSize, size.rawValue)
+            setIfChanged(FujiProp.liveViewSize, size.rawValue)
         }
         if let quality {
-            _ = try setPropRetryingBusy(FujiProp.liveViewQuality, quality.rawValue)
+            setIfChanged(FujiProp.liveViewQuality, quality.rawValue)
         }
     }
 
@@ -75,7 +76,7 @@ public final class FujiCamera {
 
         let object = try session.command(code: PTPOp.getObject, params: [Self.liveViewHandle])
         defer {
-            _ = try? session.command(code: PTPOp.deleteObject, params: [Self.liveViewHandle, 0])
+            _ = try? session.command(code: PTPOp.deleteObject, params: [Self.liveViewHandle, 0], timeout: 0.05)
         }
         guard object.responseCode == PTPRC.ok,
               let jpeg = object.data,
@@ -122,6 +123,14 @@ public final class FujiCamera {
             try startLiveView()
         }
         return rc
+    }
+
+    private func setIfChanged(_ property: UInt16, _ value: UInt16) {
+        guard (try? session.getPropU16(property))?.value != value else { return }
+        let rc = try? setPropRetryingBusy(property, value)
+        if rc != PTPRC.ok {
+            EngineLog.add(String(format: "set 0x%04X = %u failed, rc 0x%04X", property, value, rc ?? 0))
+        }
     }
 
     private func setPropRetryingBusy(_ property: UInt16, _ value: UInt16) throws -> UInt16 {

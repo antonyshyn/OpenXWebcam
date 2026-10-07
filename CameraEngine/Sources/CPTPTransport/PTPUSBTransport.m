@@ -226,7 +226,7 @@ static void *queryPlugin(io_service_t svc, CFUUIDRef pluginType, CFUUIDBytes iid
         if (error) *error = usbError(@"ReadPipe", kr);
         return nil;
     }
-    return [_readBuffer subdataWithRange:NSMakeRange(0, size)];
+    return [NSData dataWithBytes:_readBuffer.bytes length:size];
 }
 
 @end

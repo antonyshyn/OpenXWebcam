@@ -38,6 +38,8 @@ public struct PTPCommandResult {
 public final class PTPSession {
     private let transport: PTPUSBTransport
     private var transactionID: UInt32 = 0
+    private var replyPending = false
+    private var discarded = 0
     private let readTimeout: TimeInterval = 5
 
     public init(transport: PTPUSBTransport) {
@@ -59,14 +61,19 @@ public final class PTPSession {
     }
 
     private func bareCommand(code: UInt16, params: [UInt32]) throws -> UInt16 {
+        drainLateReply()
         let cmd = PTP.container(type: .command, code: code, transactionID: 0, params: params)
         try write(cmd)
-        let response = try read()
+        replyPending = true
+        let response = try read(readTimeout)
+        replyPending = false
         guard response.count >= PTP.headerLength else { throw PTPSessionError.shortRead }
         return response.readLE(at: 6)
     }
 
-    public func command(code: UInt16, params: [UInt32] = [], dataOut: Data? = nil) throws -> PTPCommandResult {
+    public func command(code: UInt16, params: [UInt32] = [], dataOut: Data? = nil, timeout: TimeInterval? = nil) throws -> PTPCommandResult {
+        let timeout = timeout ?? readTimeout
+        drainLateReply()
         transactionID += 1
         let cmd = PTP.container(type: .command, code: code, transactionID: transactionID, params: params)
         try write(cmd)
@@ -76,7 +83,8 @@ public final class PTPSession {
             try write(dataContainer)
         }
 
-        var first = try read()
+        replyPending = true
+        var first = try readContainer(timeout)
         guard let header = PTPContainerHeader(first) else {
             throw PTPSessionError.malformedResponse
         }
@@ -86,7 +94,7 @@ public final class PTPSession {
             let declared = Int(header.length)
             var acc = first
             while acc.count < declared {
-                let more = try read()
+                let more = try read(timeout)
                 if more.isEmpty { break }
                 acc.append(more)
             }
@@ -95,9 +103,10 @@ public final class PTPSession {
             if acc.count > declared {
                 first = acc.subdata(in: (acc.startIndex + declared)..<acc.endIndex)
             } else {
-                first = try read()
+                first = try readContainer(timeout)
             }
         }
+        replyPending = false
 
         guard let response = PTPResponse(first) else {
             if let h = PTPContainerHeader(first) { throw PTPSessionError.unexpectedContainer(h.type.rawValue) }
@@ -143,7 +152,35 @@ public final class PTPSession {
         try transport.write(data)
     }
 
-    private func read() throws -> Data {
-        try transport.read(withTimeout: readTimeout)
+    private func read(_ timeout: TimeInterval) throws -> Data {
+        try transport.read(withTimeout: timeout)
+    }
+
+    private func readContainer(_ timeout: TimeInterval) throws -> Data {
+        for _ in 0..<8 {
+            let data = try read(timeout)
+            if PTPContainerHeader(data)?.transactionID == transactionID {
+                return data
+            }
+            discard(data)
+        }
+        throw PTPSessionError.malformedResponse
+    }
+
+    private func drainLateReply() {
+        guard replyPending else { return }
+        replyPending = false
+        while let data = try? read(0.02) {
+            discard(data)
+        }
+    }
+
+    private func discard(_ data: Data) {
+        guard !data.isEmpty else { return }
+        discarded += 1
+        if discarded & (discarded - 1) == 0 {
+            let from = PTPContainerHeader(data).map { " from transaction \($0.transactionID)" } ?? ""
+            EngineLog.add("discarded \(data.count) bytes\(from), current transaction \(transactionID) (\(discarded) so far)")
+        }
     }
 }

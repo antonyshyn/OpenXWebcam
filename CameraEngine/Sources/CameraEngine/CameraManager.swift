@@ -31,6 +31,7 @@ public final class CameraManager {
     private var activeRegistryID: UInt64 = 0
     private var deviceGone = false
     private var lockedProps: Set<UInt16> = []
+    private var streamingSince: Date?
     private let stopStreamFlag = OSAllocatedUnfairLock(initialState: false)
     private let latestDeviceInfo = OSAllocatedUnfairLock<PTPDeviceInfo?>(initialState: nil)
     private let pendingWrites = OSAllocatedUnfairLock<[PropertyWrite]>(initialState: [])
@@ -150,6 +151,9 @@ public final class CameraManager {
             } catch {
                 lastError = describe(error)
                 EngineLog.add("stream error: \(lastError ?? "")")
+                if let streamingSince, -streamingSince.timeIntervalSinceNow > 30 {
+                    retry.reset()
+                }
                 guard !streamStopRequested, let delay = retry.nextDelay() else { break }
                 CameraDiscovery.killPtpcamerad()
                 Thread.sleep(forTimeInterval: delay)
@@ -176,6 +180,7 @@ public final class CameraManager {
     }
 
     private func streamOnce(info: PTPUSBInterfaceInfo, size: FujiLiveViewSize, quality: FujiLiveViewQuality) throws {
+        streamingSince = nil
         CameraDiscovery.killPtpcamerad()
         let transport = PTPUSBTransport(service: info.service)
         try transport.openSeizing()
@@ -194,18 +199,23 @@ public final class CameraManager {
         try fuji.prepare(size: size, quality: quality)
         try fuji.startLiveView()
         setState(.streaming(model: model))
+        streamingSince = Date()
         lockedProps = []
         publishProperties(from: fuji, advertised: advertised)
 
         var frames = 0
         var windowStart = Date()
         while !streamStopRequested {
-            applyPendingWrites(to: fuji, advertised: advertised)
-            guard let jpeg = try fuji.nextFrame() else {
+            let delivered = try autoreleasepool {
+                applyPendingWrites(to: fuji, advertised: advertised)
+                guard let jpeg = try fuji.nextFrame() else { return false }
+                onFrame?(jpeg)
+                return true
+            }
+            guard delivered else {
                 usleep(5000)
                 continue
             }
-            onFrame?(jpeg)
             frames += 1
             let elapsed = -windowStart.timeIntervalSinceNow
             if elapsed >= 2 {
