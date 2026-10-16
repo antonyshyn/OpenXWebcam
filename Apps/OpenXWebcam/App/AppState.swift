@@ -125,6 +125,12 @@ final class AppState: ObservableObject {
                                                object: nil, queue: .main) { [streamer] _ in
             streamer.stopAndWait(timeout: 2)
         }
+        for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didResignKeyNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [streamer] note in
+                guard let panel = note.object as? NSPanel else { return }
+                streamer.setPreviewEnabled(panel.isVisible && panel.occlusionState.contains(.visible))
+            }
+        }
         DispatchQueue.main.async { [installer] in
             installer.install()
         }

@@ -2,6 +2,7 @@ import Foundation
 import CoreMedia
 import CoreVideo
 import ImageIO
+import VideoToolbox
 import os
 import CameraEngine
 
@@ -22,9 +23,12 @@ final class CameraStreamer {
     private let sink = VirtualCameraSink()
     private let orientation = OSAllocatedUnfairLock(initialState: (mirrored: false, rotation: 0))
     private let framing = OSAllocatedUnfairLock(initialState: (zoom: 1.0, panX: 0.0, panY: 0.0))
+    private let previewEnabled = OSAllocatedUnfairLock(initialState: false)
     private let previewInterval: TimeInterval = 1.0 / 15
     private var lastPreviewAt = Date.distantPast
     private var formatDescription: CMFormatDescription?
+    private var pool: CVPixelBufferPool?
+    private var poolSize = (0, 0)
     private var model = ""
     private var sinkStalledFrames = 0
     private var decodeFailures = 0
@@ -61,6 +65,10 @@ final class CameraStreamer {
 
     func setFraming(zoom: Double, panX: Double, panY: Double) {
         framing.withLock { $0 = (zoom, panX, panY) }
+    }
+
+    func setPreviewEnabled(_ enabled: Bool) {
+        previewEnabled.withLock { $0 = enabled }
     }
 
     func start(size: FujiLiveViewSize, quality: FujiLiveViewQuality) {
@@ -128,9 +136,9 @@ final class CameraStreamer {
             }
             return
         }
-        let image = frame(orient(cropLetterbox(decoded)))
+        guard let pixelBuffer = render(cropLetterbox(decoded)) else { return }
 
-        if let sampleBuffer = makeSampleBuffer(image: image) {
+        if let sampleBuffer = makeSampleBuffer(pixelBuffer) {
             if sink.enqueue(sampleBuffer) {
                 sinkStalledFrames = 0
             } else {
@@ -146,28 +154,40 @@ final class CameraStreamer {
             }
         }
 
-        if -lastPreviewAt.timeIntervalSinceNow >= previewInterval {
+        if previewEnabled.withLock({ $0 }), -lastPreviewAt.timeIntervalSinceNow >= previewInterval {
             lastPreviewAt = Date()
-            DispatchQueue.main.async { [onPreviewFrame] in
-                onPreviewFrame?(image)
+            var image: CGImage?
+            VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &image)
+            if let image {
+                DispatchQueue.main.async { [onPreviewFrame] in
+                    onPreviewFrame?(image)
+                }
             }
         }
     }
 
-    private func orient(_ image: CGImage) -> CGImage {
+    private func render(_ image: CGImage) -> CVPixelBuffer? {
         let (mirrored, rotation) = orientation.withLock { $0 }
-        guard mirrored || rotation != 0 else { return image }
+        let (zoom, panX, panY) = framing.withLock { $0 }
         let swapped = rotation == 90 || rotation == 270
         let width = swapped ? image.height : image.width
         let height = swapped ? image.width : image.height
-        guard let context = CGContext(data: nil,
-                                      width: width, height: height,
+        let cropWidth = Int(Double(width) / zoom) & ~1
+        let cropHeight = Int(Double(height) / zoom) & ~1
+        let x = (Double(width - cropWidth) / 2 * (1 + panX)).rounded()
+        let y = (Double(height - cropHeight) / 2 * (1 + panY)).rounded()
+        guard let pixelBuffer = makePixelBuffer(width: cropWidth, height: cropHeight) else { return nil }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+        guard let context = CGContext(data: CVPixelBufferGetBaseAddress(pixelBuffer),
+                                      width: cropWidth, height: cropHeight,
                                       bitsPerComponent: 8,
-                                      bytesPerRow: 0,
+                                      bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
                                       space: CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
-        else { return image }
-        context.translateBy(x: CGFloat(width) / 2, y: CGFloat(height) / 2)
+        else { return nil }
+        context.translateBy(x: CGFloat(width) / 2 - x, y: y + CGFloat(cropHeight) - CGFloat(height) / 2)
         if mirrored {
             context.scaleBy(x: -1, y: 1)
         }
@@ -176,18 +196,25 @@ final class CameraStreamer {
                                        y: -CGFloat(image.height) / 2,
                                        width: CGFloat(image.width),
                                        height: CGFloat(image.height)))
-        return context.makeImage() ?? image
+        return pixelBuffer
     }
 
-    private func frame(_ image: CGImage) -> CGImage {
-        let (zoom, panX, panY) = framing.withLock { $0 }
-        let cropWidth = Int(Double(image.width) / zoom) & ~1
-        let cropHeight = Int(Double(image.height) / zoom) & ~1
-        guard cropWidth < image.width || cropHeight < image.height else { return image }
-        let x = Double(image.width - cropWidth) / 2 * (1 + panX)
-        let y = Double(image.height - cropHeight) / 2 * (1 + panY)
-        let crop = CGRect(x: x.rounded(), y: y.rounded(), width: Double(cropWidth), height: Double(cropHeight))
-        return image.cropping(to: crop) ?? image
+    private func makePixelBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+        if pool == nil || poolSize != (width, height) {
+            let attributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
+            ]
+            pool = nil
+            CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attributes as CFDictionary, &pool)
+            poolSize = (width, height)
+        }
+        guard let pool else { return nil }
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+        return pixelBuffer
     }
 
     private func cropLetterbox(_ image: CGImage) -> CGImage {
@@ -198,27 +225,9 @@ final class CameraStreamer {
         return image.cropping(to: content) ?? image
     }
 
-    private func makeSampleBuffer(image: CGImage) -> CMSampleBuffer? {
-        let width = image.width
-        let height = image.height
-        var pixelBuffer: CVPixelBuffer?
-        let attributes: [String: Any] = [
-            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
-        ]
-        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attributes as CFDictionary, &pixelBuffer)
-        guard let pixelBuffer else { return nil }
-
-        CVPixelBufferLockBaseAddress(pixelBuffer, [])
-        if let context = CGContext(data: CVPixelBufferGetBaseAddress(pixelBuffer),
-                                   width: width, height: height,
-                                   bitsPerComponent: 8,
-                                   bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
-                                   space: CGColorSpaceCreateDeviceRGB(),
-                                   bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue) {
-            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        }
-        CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
-
+    private func makeSampleBuffer(_ pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
         let dimensions = formatDescription.map(CMVideoFormatDescriptionGetDimensions)
         if dimensions?.width != Int32(width) || dimensions?.height != Int32(height) {
             var description: CMFormatDescription?

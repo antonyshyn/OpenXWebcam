@@ -44,7 +44,6 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
     private var sinkStreamSource: SinkStreamSource!
 
     private var formatDescription: CMFormatDescription!
-    private var pixelBufferPool: CVPixelBufferPool!
 
     private let stateQueue = DispatchQueue(label: "com.openxwebcam.app.Extension.state")
     private let sinkQueue = DispatchQueue(label: "com.openxwebcam.app.Extension.sink", qos: .userInteractive)
@@ -65,14 +64,6 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
                                        width: Int32(cameraWidth), height: Int32(cameraHeight),
                                        extensions: nil,
                                        formatDescriptionOut: &formatDescription)
-
-        let poolAttributes: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: cameraWidth,
-            kCVPixelBufferHeightKey as String: cameraHeight,
-            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
-        ]
-        CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, poolAttributes as CFDictionary, &pixelBufferPool)
 
         let frameDuration = CMTime(value: 1, timescale: CMTimeScale(cameraFrameRate))
         let streamFormat = CMIOExtensionStreamFormat(formatDescription: formatDescription,
@@ -175,9 +166,31 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
     }
 
     private func sendSplashFrame(hostTime: UInt64) {
+        guard let pixelBuffer = splashFrame else { return }
+        var sampleBuffer: CMSampleBuffer?
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(cameraFrameRate)),
+                                        presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()),
+                                        decodeTimeStamp: .invalid)
+        CMSampleBufferCreateForImageBuffer(allocator: kCFAllocatorDefault,
+                                           imageBuffer: pixelBuffer,
+                                           dataReady: true,
+                                           makeDataReadyCallback: nil,
+                                           refcon: nil,
+                                           formatDescription: formatDescription,
+                                           sampleTiming: &timing,
+                                           sampleBufferOut: &sampleBuffer)
+        if let sampleBuffer {
+            sourceStreamSource.stream.send(sampleBuffer, discontinuity: [], hostTimeInNanoseconds: hostTime)
+        }
+    }
+
+    private lazy var splashFrame: CVPixelBuffer? = {
         var pixelBuffer: CVPixelBuffer?
-        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pixelBufferPool, &pixelBuffer)
-        guard let pixelBuffer else { return }
+        let attributes: [String: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
+        ]
+        CVPixelBufferCreate(kCFAllocatorDefault, cameraWidth, cameraHeight, kCVPixelFormatType_32BGRA, attributes as CFDictionary, &pixelBuffer)
+        guard let pixelBuffer else { return nil }
 
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         if let context = CGContext(data: CVPixelBufferGetBaseAddress(pixelBuffer),
@@ -195,23 +208,8 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
             }
         }
         CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
-
-        var sampleBuffer: CMSampleBuffer?
-        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(cameraFrameRate)),
-                                        presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()),
-                                        decodeTimeStamp: .invalid)
-        CMSampleBufferCreateForImageBuffer(allocator: kCFAllocatorDefault,
-                                           imageBuffer: pixelBuffer,
-                                           dataReady: true,
-                                           makeDataReadyCallback: nil,
-                                           refcon: nil,
-                                           formatDescription: formatDescription,
-                                           sampleTiming: &timing,
-                                           sampleBufferOut: &sampleBuffer)
-        if let sampleBuffer {
-            sourceStreamSource.stream.send(sampleBuffer, discontinuity: [], hostTimeInNanoseconds: hostTime)
-        }
-    }
+        return pixelBuffer
+    }()
 
     private let splashLogo: CGImage? = {
         guard let url = Bundle.main.url(forResource: "splash", withExtension: "png"),
