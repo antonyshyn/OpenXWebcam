@@ -193,6 +193,7 @@ struct MenuView: View {
         HStack {
             Menu {
                 Toggle("Launch at Login", isOn: $state.launchAtLogin)
+                Toggle("Limit to 30 fps", isOn: $state.limitFrameRate)
                 Divider()
                 Button("Copy Diagnostics") { state.copyDiagnostics() }
                 Button("Reinstall Camera Extension") { state.installExtension() }

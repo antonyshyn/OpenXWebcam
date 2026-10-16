@@ -72,6 +72,10 @@ final class CameraStreamer {
         manager.apply(size: size, quality: quality)
     }
 
+    func setMaxFrameRate(_ fps: Int) {
+        manager.setMaxFrameRate(fps)
+    }
+
     func stop() {
         manager.stop()
         sink.disconnect()

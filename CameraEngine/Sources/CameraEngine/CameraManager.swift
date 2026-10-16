@@ -33,6 +33,7 @@ public final class CameraManager {
     private var lockedProps: Set<UInt16> = []
     private var streamingSince: Date?
     private let stopStreamFlag = OSAllocatedUnfairLock(initialState: false)
+    private let maxFrameRate = OSAllocatedUnfairLock(initialState: 0)
     private let latestDeviceInfo = OSAllocatedUnfairLock<PTPDeviceInfo?>(initialState: nil)
     private let pendingWrites = OSAllocatedUnfairLock<[PropertyWrite]>(initialState: [])
 
@@ -80,6 +81,10 @@ public final class CameraManager {
             self.liveViewQuality = quality
             self.requestStreamStop()
         }
+    }
+
+    public func setMaxFrameRate(_ fps: Int) {
+        maxFrameRate.withLock { $0 = fps }
     }
 
     public var deviceInfo: PTPDeviceInfo? {
@@ -205,18 +210,21 @@ public final class CameraManager {
 
         var frames = 0
         var windowStart = Date()
+        var nextFrameAt: TimeInterval = 0
         while !streamStopRequested {
-            let delivered = try autoreleasepool {
+            let gotFrame = try autoreleasepool {
                 applyPendingWrites(to: fuji, advertised: advertised)
                 guard let jpeg = try fuji.nextFrame() else { return false }
-                onFrame?(jpeg)
+                if frameDue(&nextFrameAt) {
+                    onFrame?(jpeg)
+                    frames += 1
+                }
                 return true
             }
-            guard delivered else {
+            guard gotFrame else {
                 usleep(5000)
                 continue
             }
-            frames += 1
             let elapsed = -windowStart.timeIntervalSinceNow
             if elapsed >= 2 {
                 onFPS?(Double(frames) / elapsed)
@@ -226,6 +234,16 @@ public final class CameraManager {
         }
         try? fuji.stopLiveView()
         _ = try? session.close()
+    }
+
+    private func frameDue(_ nextFrameAt: inout TimeInterval) -> Bool {
+        let fps = maxFrameRate.withLock { $0 }
+        guard fps > 0 else { return true }
+        let interval = 1 / Double(fps)
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now >= nextFrameAt - interval / 2 else { return false }
+        nextFrameAt = max(nextFrameAt + interval, now)
+        return true
     }
 
     private func applyPendingWrites(to fuji: FujiCamera, advertised: [UInt16]) {

@@ -63,6 +63,12 @@ final class AppState: ObservableObject {
             streamer.apply(size: liveViewSize, quality: liveViewQuality)
         }
     }
+    @Published var limitFrameRate: Bool {
+        didSet {
+            UserDefaults.standard.set(limitFrameRate, forKey: "limitFrameRate")
+            streamer.setMaxFrameRate(limitFrameRate ? 30 : 0)
+        }
+    }
     @Published var cameraProperties: [CameraProperty] = []
     @Published var previewImage: CGImage?
 
@@ -74,6 +80,7 @@ final class AppState: ObservableObject {
     init() {
         liveViewSize = FujiLiveViewSize(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewSize"))) ?? .xga
         liveViewQuality = FujiLiveViewQuality(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewQuality"))) ?? .normal
+        limitFrameRate = UserDefaults.standard.bool(forKey: "limitFrameRate")
         launchAtLogin = SMAppService.mainApp.status == .enabled
         mirrored = UserDefaults.standard.bool(forKey: "mirrored")
         rotation = UserDefaults.standard.integer(forKey: "rotation")
@@ -98,6 +105,7 @@ final class AppState: ObservableObject {
             self?.previewImage = image
         }
         streamer.setOrientation(mirrored: mirrored, rotation: rotation)
+        streamer.setMaxFrameRate(limitFrameRate ? 30 : 0)
         applyFraming()
         presence.onChange = { [weak self] productID in
             DispatchQueue.main.async {
