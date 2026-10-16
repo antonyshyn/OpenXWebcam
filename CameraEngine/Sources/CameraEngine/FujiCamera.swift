@@ -71,10 +71,8 @@ public final class FujiCamera {
     }
 
     public func nextFrame() throws -> Data? {
-        let info = try session.command(code: PTPOp.getObjectInfo, params: [Self.liveViewHandle])
-        if info.responseCode == PTPRC.invalidObjectHandle { return nil }
-
         let object = try session.command(code: PTPOp.getObject, params: [Self.liveViewHandle])
+        if object.responseCode == PTPRC.invalidObjectHandle { return nil }
         defer {
             _ = try? session.command(code: PTPOp.deleteObject, params: [Self.liveViewHandle, 0], timeout: 0.05)
         }

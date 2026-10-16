@@ -22,6 +22,8 @@ final class CameraStreamer {
 
     private let manager = CameraManager()
     private let sink = VirtualCameraSink()
+    private let frameQueue = DispatchQueue(label: "com.openxwebcam.frames", qos: .userInteractive, autoreleaseFrequency: .workItem)
+    private let pendingFrame = OSAllocatedUnfairLock<Data?>(initialState: nil)
     private let orientation = OSAllocatedUnfairLock(initialState: (mirrored: false, rotation: 0))
     private let framing = OSAllocatedUnfairLock(initialState: (zoom: 1.0, panX: 0.0, panY: 0.0))
     private let previewEnabled = OSAllocatedUnfairLock(initialState: false)
@@ -46,7 +48,7 @@ final class CameraStreamer {
             self.setState(.streaming(model: self.model, fps: fps))
         }
         manager.onFrame = { [weak self] jpeg in
-            self?.push(jpeg)
+            self?.submit(jpeg)
         }
         manager.onProperties = { [weak self] properties in
             DispatchQueue.main.async {
@@ -90,25 +92,31 @@ final class CameraStreamer {
 
     func stop() {
         manager.stop()
-        sink.disconnect()
+        disconnectSink()
     }
 
     func stopAndWait(timeout: TimeInterval) {
         manager.stop()
-        sink.disconnect()
+        frameQueue.sync { sink.disconnect() }
         manager.waitUntilIdle(timeout: timeout)
+    }
+
+    private func disconnectSink() {
+        frameQueue.async { [sink] in
+            sink.disconnect()
+        }
     }
 
     private func handle(_ state: CameraState) {
         switch state {
         case .stopped:
-            sink.disconnect()
+            disconnectSink()
             setState(.idle)
         case .waitingForCamera:
-            sink.disconnect()
+            disconnectSink()
             setState(.waitingForCamera)
         case .connecting:
-            if !sink.isConnected && !sink.connect() {
+            if !frameQueue.sync(execute: { sink.isConnected || sink.connect() }) {
                 EngineLog.add("sink connect failed")
                 manager.stop()
                 setState(.failed("Virtual camera not available. Install the camera extension first."))
@@ -119,7 +127,7 @@ final class CameraStreamer {
             self.model = model
             setState(.streaming(model: model, fps: 0))
         case .cameraError(let message):
-            sink.disconnect()
+            disconnectSink()
             setState(.failed(message))
         }
     }
@@ -127,6 +135,18 @@ final class CameraStreamer {
     private func setState(_ state: State) {
         DispatchQueue.main.async { [onStateChange] in
             onStateChange?(state)
+        }
+    }
+
+    private func submit(_ jpeg: Data) {
+        let queued = pendingFrame.withLock { pending in
+            defer { pending = jpeg }
+            return pending != nil
+        }
+        guard !queued else { return }
+        frameQueue.async { [weak self] in
+            guard let self, let jpeg = pendingFrame.withLock({ $0.take() }) else { return }
+            push(jpeg)
         }
     }
 
