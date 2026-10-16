@@ -47,6 +47,7 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
     private var pixelBufferPool: CVPixelBufferPool!
 
     private let stateQueue = DispatchQueue(label: "com.openxwebcam.app.Extension.state")
+    private let sinkQueue = DispatchQueue(label: "com.openxwebcam.app.Extension.sink", qos: .userInteractive)
     private var splashTimer: DispatchSourceTimer?
     private var lastSinkFrameHostTime: UInt64 = 0
     private var sourceClientCount = 0
@@ -149,7 +150,13 @@ final class DeviceSource: NSObject, CMIOExtensionDeviceSource {
                 let output = CMIOExtensionScheduledOutput(sequenceNumber: sequenceNumber, hostTimeInNanoseconds: hostTime)
                 self.sinkStreamSource.stream.notifyScheduledOutputChanged(output)
             }
-            self.pullFromSink(client)
+            if sampleBuffer != nil && hasMore {
+                self.pullFromSink(client)
+            } else {
+                self.sinkQueue.asyncAfter(deadline: .now() + .milliseconds(10)) {
+                    self.pullFromSink(client)
+                }
+            }
         }
     }
 

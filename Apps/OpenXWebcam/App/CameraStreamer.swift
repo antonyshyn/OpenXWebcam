@@ -89,6 +89,7 @@ final class CameraStreamer {
             sink.disconnect()
             setState(.idle)
         case .waitingForCamera:
+            sink.disconnect()
             setState(.waitingForCamera)
         case .connecting:
             if !sink.isConnected && !sink.connect() {
@@ -102,6 +103,7 @@ final class CameraStreamer {
             self.model = model
             setState(.streaming(model: model, fps: 0))
         case .cameraError(let message):
+            sink.disconnect()
             setState(.failed(message))
         }
     }
