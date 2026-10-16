@@ -76,6 +76,7 @@ final class AppState: ObservableObject {
     private let streamer = CameraStreamer()
     private let presence = CameraPresence()
     private var connectedProductID: UInt16?
+    private var startWhenInstalled = false
 
     init() {
         liveViewSize = FujiLiveViewSize(rawValue: UInt16(UserDefaults.standard.integer(forKey: "liveViewSize"))) ?? .xga
@@ -88,7 +89,11 @@ final class AppState: ObservableObject {
         panX = min(max(UserDefaults.standard.double(forKey: "panX"), -1), 1)
         panY = min(max(UserDefaults.standard.double(forKey: "panY"), -1), 1)
         installer.onStatusChange = { [weak self] status in
-            self?.extensionStatus = status
+            guard let self else { return }
+            extensionStatus = status
+            if status == .installed && startWhenInstalled {
+                startStreaming()
+            }
         }
         streamer.onStateChange = { [weak self] state in
             self?.streamerState = state
@@ -123,9 +128,7 @@ final class AppState: ObservableObject {
         DispatchQueue.main.async { [installer] in
             installer.install()
         }
-        if UserDefaults.standard.bool(forKey: "autoStart") {
-            startStreaming()
-        }
+        startWhenInstalled = UserDefaults.standard.bool(forKey: "autoStart")
     }
 
     var configurableProperties: [CameraProperty] {
@@ -177,11 +180,13 @@ final class AppState: ObservableObject {
     }
 
     func startStreaming() {
+        startWhenInstalled = false
         UserDefaults.standard.set(true, forKey: "autoStart")
         streamer.start(size: liveViewSize, quality: liveViewQuality)
     }
 
     func stopStreaming() {
+        startWhenInstalled = false
         UserDefaults.standard.set(false, forKey: "autoStart")
         streamer.stop()
     }
