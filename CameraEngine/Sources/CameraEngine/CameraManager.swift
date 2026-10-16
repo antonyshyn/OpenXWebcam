@@ -215,10 +215,8 @@ public final class CameraManager {
             let gotFrame = try autoreleasepool {
                 applyPendingWrites(to: fuji, advertised: advertised)
                 guard let jpeg = try fuji.nextFrame() else { return false }
-                if frameDue(&nextFrameAt) {
-                    onFrame?(jpeg)
-                    frames += 1
-                }
+                onFrame?(jpeg)
+                frames += 1
                 return true
             }
             guard gotFrame else {
@@ -231,19 +229,21 @@ public final class CameraManager {
                 frames = 0
                 windowStart = Date()
             }
+            sleepUntilNextFrame(&nextFrameAt)
         }
         try? fuji.stopLiveView()
         _ = try? session.close()
     }
 
-    private func frameDue(_ nextFrameAt: inout TimeInterval) -> Bool {
+    private func sleepUntilNextFrame(_ nextFrameAt: inout TimeInterval) {
         let fps = maxFrameRate.withLock { $0 }
-        guard fps > 0 else { return true }
+        guard fps > 0 else { return }
         let interval = 1 / Double(fps)
         let now = ProcessInfo.processInfo.systemUptime
-        guard now >= nextFrameAt - interval / 2 else { return false }
-        nextFrameAt = max(nextFrameAt + interval, now)
-        return true
+        nextFrameAt = max(nextFrameAt + interval, now - interval / 2)
+        if nextFrameAt > now {
+            usleep(useconds_t((nextFrameAt - now) * 1_000_000))
+        }
     }
 
     private func applyPendingWrites(to fuji: FujiCamera, advertised: [UInt16]) {
