@@ -1,4 +1,5 @@
 import Foundation
+import CoreImage
 import CoreMedia
 import CoreVideo
 import ImageIO
@@ -26,6 +27,9 @@ final class CameraStreamer {
     private let previewEnabled = OSAllocatedUnfairLock(initialState: false)
     private let previewInterval: TimeInterval = 1.0 / 15
     private var lastPreviewAt = Date.distantPast
+    private let ciContext = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false])
+    private var decoder: VTDecompressionSession?
+    private var jpegFormat: CMVideoFormatDescription?
     private var formatDescription: CMFormatDescription?
     private var pool: CVPixelBufferPool?
     private var poolSize = (0, 0)
@@ -127,9 +131,7 @@ final class CameraStreamer {
     }
 
     private func push(_ jpeg: Data) {
-        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
-              let decoded = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
-        else {
+        guard let decoded = decode(jpeg) else {
             decodeFailures += 1
             if decodeFailures == 1 {
                 EngineLog.add("frame decode failed")
@@ -166,36 +168,81 @@ final class CameraStreamer {
         }
     }
 
-    private func render(_ image: CGImage) -> CVPixelBuffer? {
+    private func decode(_ jpeg: Data) -> CIImage? {
+        if let decoder, let pixelBuffer = decode(jpeg, with: decoder) {
+            return CIImage(cvPixelBuffer: pixelBuffer)
+        }
+        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
+        else { return nil }
+        makeDecoder(width: image.width, height: image.height)
+        return CIImage(cgImage: image)
+    }
+
+    private func decode(_ jpeg: Data, with decoder: VTDecompressionSession) -> CVPixelBuffer? {
+        var blockBuffer: CMBlockBuffer?
+        CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: jpeg.count,
+                                           blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
+                                           dataLength: jpeg.count, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &blockBuffer)
+        guard let blockBuffer else { return nil }
+        jpeg.withUnsafeBytes {
+            _ = CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: blockBuffer, offsetIntoDestination: 0, dataLength: jpeg.count)
+        }
+        var sampleBuffer: CMSampleBuffer?
+        var sampleSize = jpeg.count
+        CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: blockBuffer, formatDescription: jpegFormat,
+                                  sampleCount: 1, sampleTimingEntryCount: 0, sampleTimingArray: nil,
+                                  sampleSizeEntryCount: 1, sampleSizeArray: &sampleSize, sampleBufferOut: &sampleBuffer)
+        guard let sampleBuffer else { return nil }
+        var pixelBuffer: CVPixelBuffer?
+        VTDecompressionSessionDecodeFrame(decoder, sampleBuffer: sampleBuffer, flags: [], infoFlagsOut: nil) { status, _, imageBuffer, _, _ in
+            if status == noErr {
+                pixelBuffer = imageBuffer
+            }
+        }
+        return pixelBuffer
+    }
+
+    private func makeDecoder(width: Int, height: Int) {
+        let dimensions = jpegFormat.map(CMVideoFormatDescriptionGetDimensions)
+        guard dimensions?.width != Int32(width) || dimensions?.height != Int32(height) else { return }
+        if let decoder {
+            VTDecompressionSessionInvalidate(decoder)
+        }
+        decoder = nil
+        CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: kCMVideoCodecType_JPEG,
+                                       width: Int32(width), height: Int32(height), extensions: nil, formatDescriptionOut: &jpegFormat)
+        guard let jpegFormat else { return }
+        let attributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr8,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
+        ]
+        VTDecompressionSessionCreate(allocator: kCFAllocatorDefault, formatDescription: jpegFormat, decoderSpecification: nil,
+                                     imageBufferAttributes: attributes as CFDictionary, outputCallback: nil, decompressionSessionOut: &decoder)
+    }
+
+    private func render(_ image: CIImage) -> CVPixelBuffer? {
         let (mirrored, rotation) = orientation.withLock { $0 }
         let (zoom, panX, panY) = framing.withLock { $0 }
+        let extent = image.extent
         let swapped = rotation == 90 || rotation == 270
-        let width = swapped ? image.height : image.width
-        let height = swapped ? image.width : image.height
+        let width = Int(swapped ? extent.height : extent.width)
+        let height = Int(swapped ? extent.width : extent.height)
         let cropWidth = Int(Double(width) / zoom) & ~1
         let cropHeight = Int(Double(height) / zoom) & ~1
         let x = (Double(width - cropWidth) / 2 * (1 + panX)).rounded()
         let y = (Double(height - cropHeight) / 2 * (1 + panY)).rounded()
         guard let pixelBuffer = makePixelBuffer(width: cropWidth, height: cropHeight) else { return nil }
 
-        CVPixelBufferLockBaseAddress(pixelBuffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
-        guard let context = CGContext(data: CVPixelBufferGetBaseAddress(pixelBuffer),
-                                      width: cropWidth, height: cropHeight,
-                                      bitsPerComponent: 8,
-                                      bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
-                                      space: CGColorSpaceCreateDeviceRGB(),
-                                      bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
-        else { return nil }
-        context.translateBy(x: CGFloat(width) / 2 - x, y: y + CGFloat(cropHeight) - CGFloat(height) / 2)
+        var transform = CGAffineTransform(translationX: CGFloat(width) / 2 - x, y: y + CGFloat(cropHeight) - CGFloat(height) / 2)
         if mirrored {
-            context.scaleBy(x: -1, y: 1)
+            transform = transform.scaledBy(x: -1, y: 1)
         }
-        context.rotate(by: -CGFloat(rotation) * .pi / 180)
-        context.draw(image, in: CGRect(x: -CGFloat(image.width) / 2,
-                                       y: -CGFloat(image.height) / 2,
-                                       width: CGFloat(image.width),
-                                       height: CGFloat(image.height)))
+        transform = transform
+            .rotated(by: -CGFloat(rotation) * .pi / 180)
+            .translatedBy(x: -extent.midX, y: -extent.midY)
+        ciContext.render(image.transformed(by: transform), to: pixelBuffer,
+                         bounds: CGRect(x: 0, y: 0, width: cropWidth, height: cropHeight), colorSpace: nil)
         return pixelBuffer
     }
 
@@ -217,12 +264,13 @@ final class CameraStreamer {
         return pixelBuffer
     }
 
-    private func cropLetterbox(_ image: CGImage) -> CGImage {
-        guard image.height * 4 == image.width * 3 else { return image }
-        let contentHeight = (image.width * 2 / 3) & ~1
-        let bar = (image.height - contentHeight) / 2
-        let content = CGRect(x: 0, y: bar, width: image.width, height: contentHeight)
-        return image.cropping(to: content) ?? image
+    private func cropLetterbox(_ image: CIImage) -> CIImage {
+        let width = Int(image.extent.width)
+        let height = Int(image.extent.height)
+        guard height * 4 == width * 3 else { return image }
+        let contentHeight = (width * 2 / 3) & ~1
+        let bar = (height - contentHeight) / 2
+        return image.cropped(to: CGRect(x: 0, y: bar, width: width, height: contentHeight))
     }
 
     private func makeSampleBuffer(_ pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
