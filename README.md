@@ -28,7 +28,8 @@ offers settings the camera actually has.
 | Camera | Status |
 | --- | --- |
 | X-T30 | works, tested |
-| X-T1, X-T2, X-T3, X-T4, X-T5, X-Pro2, X-Pro3, X-E3, X-H1, X-H2, X-S10, X100V, X-M5, GFX 50S, GFX 50R, GFX 100, GFX 100S, GFX 100 II | expected to work — same protocol, live view confirmed by the libgphoto2 project |
+| X-S10 | works, reported ([#3](https://github.com/antonyshyn/OpenXWebcam/issues/3)) |
+| X-T1, X-T2, X-T3, X-T4, X-T5, X-Pro2, X-Pro3, X-E3, X-H1, X-H2, X100V, X-M5, GFX 50S, GFX 50R, GFX 100, GFX 100S, GFX 100 II | expected to work — same protocol, live view confirmed by the libgphoto2 project |
 | X-H2S, X-E4, X-E5, X100VI, X-T30 II, X-S20, older X bodies | should work, unconfirmed |
 
 Have an unconfirmed body? Try it and open an issue with the output of
