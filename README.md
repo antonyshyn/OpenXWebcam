@@ -20,11 +20,6 @@ camera ──USB/PTP──> menu bar app ──> CMIO camera extension ──> Z
 ```
 
 ## Camera support
-
-The live-view protocol is the same across modern X and GFX bodies. The app
-adapts at runtime: it reads what the connected camera advertises and only
-offers settings the camera actually has.
-
 | Camera | Status |
 | --- | --- |
 | X-T30 | works, tested |
